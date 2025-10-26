@@ -1,35 +1,43 @@
 // backend/routes/notificationsWithDB.js
-// Complete Notifications Management with Database
+// Complete Notifications System with Database Integration
 
 const express = require('express');
 const router = express.Router();
 const { 
   NotificationService,
-  UserService 
+  ActivityLogService 
 } = require('../services/database');
 const { authenticateToken } = require('./authWithDB');
 
 // ==========================================
-// GET ALL NOTIFICATIONS FOR USER
+// GET ALL NOTIFICATIONS
 // ==========================================
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const readOnly = req.query.read === 'true';
+    const unreadOnly = req.query.unread === 'true';
     const limit = parseInt(req.query.limit) || 50;
 
-    const notifications = await NotificationService.getUserNotifications(
+    let notifications = await NotificationService.getUserNotifications(
       req.user.id, 
-      readOnly,
-      limit
+      unreadOnly
     );
 
-    const unreadCount = await NotificationService.getUnreadCount(req.user.id);
+    // Limit results
+    notifications = notifications.slice(0, limit);
+
+    // Group by type for summary
+    const byType = {};
+    notifications.forEach(n => {
+      byType[n.type] = (byType[n.type] || 0) + 1;
+    });
 
     res.json({
       success: true,
       notifications,
-      unread_count: unreadCount,
-      total: notifications.length
+      total: notifications.length,
+      unread: notifications.filter(n => !n.read).length,
+      byType
     });
 
   } catch (error) {
@@ -39,26 +47,37 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// GET UNREAD NOTIFICATION COUNT
+// GET NOTIFICATION BY ID
 // ==========================================
-router.get('/unread/count', authenticateToken, async (req, res) => {
+
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const count = await NotificationService.getUnreadCount(req.user.id);
+    const notification = await NotificationService.findById(req.params.id);
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    // Check ownership
+    if (notification.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
 
     res.json({
       success: true,
-      unread_count: count
+      notification
     });
 
   } catch (error) {
-    console.error('Get unread count error:', error);
-    res.status(500).json({ error: 'Failed to get unread count' });
+    console.error('Get notification error:', error);
+    res.status(500).json({ error: 'Failed to get notification' });
   }
 });
 
 // ==========================================
 // MARK NOTIFICATION AS READ
 // ==========================================
+
 router.put('/:id/read', authenticateToken, async (req, res) => {
   try {
     const notification = await NotificationService.findById(req.params.id);
@@ -72,11 +91,20 @@ router.put('/:id/read', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    await NotificationService.markAsRead(req.params.id);
+    const updated = await NotificationService.markAsRead(req.params.id);
+
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'notification_read',
+      resource: 'notification',
+      resourceId: req.params.id,
+      metadata: { type: notification.type }
+    });
 
     res.json({
       success: true,
-      message: 'Notification marked as read'
+      notification: updated
     });
 
   } catch (error) {
@@ -86,15 +114,24 @@ router.put('/:id/read', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// MARK ALL NOTIFICATIONS AS READ
+// MARK ALL AS READ
 // ==========================================
-router.put('/read-all', authenticateToken, async (req, res) => {
+
+router.post('/read-all', authenticateToken, async (req, res) => {
   try {
-    await NotificationService.markAllAsRead(req.user.id);
+    const result = await NotificationService.markAllAsRead(req.user.id);
+
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'notifications_read_all',
+      metadata: { count: result.count }
+    });
 
     res.json({
       success: true,
-      message: 'All notifications marked as read'
+      message: 'All notifications marked as read',
+      count: result.count
     });
 
   } catch (error) {
@@ -106,6 +143,7 @@ router.put('/read-all', authenticateToken, async (req, res) => {
 // ==========================================
 // DELETE NOTIFICATION
 // ==========================================
+
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const notification = await NotificationService.findById(req.params.id);
@@ -121,6 +159,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
     await NotificationService.delete(req.params.id);
 
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'notification_deleted',
+      resource: 'notification',
+      resourceId: req.params.id
+    });
+
     res.json({
       success: true,
       message: 'Notification deleted'
@@ -135,43 +181,44 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // ==========================================
 // DELETE ALL READ NOTIFICATIONS
 // ==========================================
-router.delete('/read/clear', authenticateToken, async (req, res) => {
+
+router.delete('/clear/read', authenticateToken, async (req, res) => {
   try {
-    const deleted = await NotificationService.deleteAllRead(req.user.id);
+    const result = await NotificationService.deleteAllRead(req.user.id);
+
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'notifications_cleared',
+      metadata: { count: result.count }
+    });
 
     res.json({
       success: true,
-      message: `Deleted ${deleted} read notifications`,
-      deleted_count: deleted
+      message: 'Read notifications cleared',
+      count: result.count
     });
 
   } catch (error) {
-    console.error('Clear read notifications error:', error);
+    console.error('Clear notifications error:', error);
     res.status(500).json({ error: 'Failed to clear notifications' });
   }
 });
 
 // ==========================================
-// CREATE NOTIFICATION (Admin/System only)
+// CREATE NOTIFICATION (Admin/System)
 // ==========================================
+
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { userId, title, message, type, actionUrl, actionText } = req.body;
+    const { title, message, type, actionUrl, actionText } = req.body;
 
     // Validation
-    if (!userId || !title || !message) {
-      return res.status(400).json({ 
-        error: 'userId, title, and message are required' 
-      });
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message required' });
     }
 
-    // Check if user exists
-    const user = await UserService.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const notification = await NotificationService.create(userId, {
+    const notification = await NotificationService.create(req.user.id, {
       title,
       message,
       type: type || 'info',
@@ -191,35 +238,82 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// GET NOTIFICATION BY ID
+// GET NOTIFICATION PREFERENCES
 // ==========================================
-router.get('/:id', authenticateToken, async (req, res) => {
+
+router.get('/preferences/settings', authenticateToken, async (req, res) => {
   try {
-    const notification = await NotificationService.findById(req.params.id);
-
-    if (!notification) {
-      return res.status(404).json({ error: 'Notification not found' });
-    }
-
-    // Check ownership
-    if (notification.userId !== req.user.id) {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
-
-    // Auto-mark as read when fetched
-    if (!notification.read) {
-      await NotificationService.markAsRead(req.params.id);
-      notification.read = true;
-    }
+    const preferences = await NotificationService.getPreferences(req.user.id);
 
     res.json({
       success: true,
-      notification
+      preferences: preferences || {
+        email: true,
+        push: true,
+        builds: true,
+        payments: true,
+        marketing: false
+      }
     });
 
   } catch (error) {
-    console.error('Get notification error:', error);
-    res.status(500).json({ error: 'Failed to get notification' });
+    console.error('Get preferences error:', error);
+    res.status(500).json({ error: 'Failed to get preferences' });
+  }
+});
+
+// ==========================================
+// UPDATE NOTIFICATION PREFERENCES
+// ==========================================
+
+router.put('/preferences/settings', authenticateToken, async (req, res) => {
+  try {
+    const { email, push, builds, payments, marketing } = req.body;
+
+    const preferences = await NotificationService.updatePreferences(req.user.id, {
+      email: email !== undefined ? email : true,
+      push: push !== undefined ? push : true,
+      builds: builds !== undefined ? builds : true,
+      payments: payments !== undefined ? payments : true,
+      marketing: marketing !== undefined ? marketing : false
+    });
+
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'preferences_updated',
+      metadata: preferences
+    });
+
+    res.json({
+      success: true,
+      preferences
+    });
+
+  } catch (error) {
+    console.error('Update preferences error:', error);
+    res.status(500).json({ error: 'Failed to update preferences' });
+  }
+});
+
+// ==========================================
+// GET NOTIFICATION STATS
+// ==========================================
+
+router.get('/stats/summary', authenticateToken, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const stats = await NotificationService.getStats(req.user.id, days);
+
+    res.json({
+      success: true,
+      stats,
+      period: `Last ${days} days`
+    });
+
+  } catch (error) {
+    console.error('Get notification stats error:', error);
+    res.status(500).json({ error: 'Failed to get stats' });
   }
 });
 

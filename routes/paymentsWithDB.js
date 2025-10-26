@@ -1,5 +1,5 @@
 // backend/routes/paymentsWithDB.js
-// Complete Payment System with Database Integration
+// Complete Payment System with Razorpay Integration
 
 const express = require('express');
 const router = express.Router();
@@ -7,9 +7,10 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { 
   PaymentService, 
-  UserService,
+  UserService, 
   NotificationService,
-  ActivityLogService 
+  ActivityLogService,
+  AnalyticsService 
 } = require('../services/database');
 const EmailService = require('../services/emailService');
 const { authenticateToken } = require('./authWithDB');
@@ -17,87 +18,85 @@ const { authenticateToken } = require('./authWithDB');
 // ==========================================
 // INITIALIZE RAZORPAY
 // ==========================================
+
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_xxxxx',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'your_secret'
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
 // ==========================================
-// PRICING PLANS (in INR)
+// PRICING PLANS
 // ==========================================
+
 const PLANS = {
   starter: {
+    id: 'starter',
     name: 'Starter',
     price: 2499, // ₹2,499/month (~$30)
     currency: 'INR',
     credits: 100,
+    duration: 'monthly',
     features: [
       'Full code generation',
+      'Market research',
       'QA testing',
       '100 builds/month',
       'Email support'
-    ],
-    interval: 'monthly'
+    ]
   },
   premium: {
+    id: 'premium',
     name: 'Premium',
     price: 8299, // ₹8,299/month (~$100)
     currency: 'INR',
     credits: 1000,
+    duration: 'monthly',
     features: [
+      'Everything in Starter',
       'Unlimited builds',
+      'Research paper analysis',
+      'Priority AI processing',
       'Priority support',
       'Live monitoring',
-      'API access',
-      'Advanced analytics'
-    ],
-    interval: 'monthly'
+      'API access'
+    ]
   }
 };
 
 // ==========================================
-// GET ALL PRICING PLANS
+// GET ALL PLANS
 // ==========================================
+
 router.get('/plans', (req, res) => {
-  try {
-    const plansWithPricing = Object.entries(PLANS).map(([key, plan]) => ({
-      id: key,
-      ...plan,
-      price_formatted: `₹${plan.price.toLocaleString('en-IN')}`,
-      price_usd: `$${(plan.price / 83).toFixed(0)}`
-    }));
+  const plansWithPricing = Object.values(PLANS).map(plan => ({
+    ...plan,
+    price_formatted: `₹${plan.price.toLocaleString('en-IN')}`,
+    price_usd: `$${(plan.price / 83).toFixed(0)}`,
+    savings: plan.duration === 'yearly' ? '20% off' : null
+  }));
 
-    res.json({
-      success: true,
-      plans: plansWithPricing,
-      currency: 'INR',
-      note: 'Prices in Indian Rupees'
-    });
-
-  } catch (error) {
-    console.error('Get plans error:', error);
-    res.status(500).json({ error: 'Failed to get plans' });
-  }
+  res.json({
+    success: true,
+    plans: plansWithPricing,
+    currency: 'INR',
+    note: 'Prices in Indian Rupees'
+  });
 });
 
 // ==========================================
-// CREATE RAZORPAY ORDER
+// CREATE ORDER (Step 1: Before Payment)
 // ==========================================
+
 router.post('/create-order', authenticateToken, async (req, res) => {
   try {
     const { plan } = req.body;
 
-    // Validation
     if (!PLANS[plan]) {
-      return res.status(400).json({ error: 'Invalid plan selected' });
+      return res.status(400).json({ error: 'Invalid plan' });
     }
 
     const planDetails = PLANS[plan];
     const user = await UserService.findById(req.user.id);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
 
     // Create Razorpay order
     const options = {
@@ -105,29 +104,35 @@ router.post('/create-order', authenticateToken, async (req, res) => {
       currency: planDetails.currency,
       receipt: `receipt_${Date.now()}_${user.id}`,
       notes: {
-        plan: plan,
-        credits: planDetails.credits,
         userId: user.id,
-        userEmail: user.email
+        email: user.email,
+        plan: plan,
+        credits: planDetails.credits
       }
     };
 
     const razorpayOrder = await razorpay.orders.create(options);
 
-    // Save payment initiation in database
+    // Create payment record in database
     const payment = await PaymentService.create({
       userId: user.id,
       razorpayOrderId: razorpayOrder.id,
-      amount: planDetails.price,
+      amount: planDetails.price * 100,
       currency: planDetails.currency,
-      plan: plan,
-      status: 'pending'
+      status: 'created',
+      planId: plan,
+      planName: planDetails.name,
+      planDuration: planDetails.duration,
+      receipt: razorpayOrder.receipt,
+      notes: options.notes
     });
 
     // Log activity
     await ActivityLogService.log({
       userId: user.id,
       action: 'payment_initiated',
+      resource: 'payment',
+      resourceId: payment.id,
       metadata: { plan, amount: planDetails.price }
     });
 
@@ -136,8 +141,7 @@ router.post('/create-order', authenticateToken, async (req, res) => {
       order: {
         id: razorpayOrder.id,
         amount: razorpayOrder.amount,
-        currency: razorpayOrder.currency,
-        receipt: razorpayOrder.receipt
+        currency: razorpayOrder.currency
       },
       plan: planDetails,
       razorpay_key: process.env.RAZORPAY_KEY_ID,
@@ -154,8 +158,9 @@ router.post('/create-order', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// VERIFY PAYMENT
+// VERIFY PAYMENT (Step 2: After Payment)
 // ==========================================
+
 router.post('/verify', authenticateToken, async (req, res) => {
   try {
     const {
@@ -165,102 +170,85 @@ router.post('/verify', authenticateToken, async (req, res) => {
       plan
     } = req.body;
 
-    // Validation
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res.status(400).json({ 
-        error: 'Missing payment verification data' 
-      });
-    }
-
     // Verify signature
     const sign = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSign = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || 'your_secret')
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
       .update(sign.toString())
       .digest('hex');
 
-    const isValid = razorpay_signature === expectedSign;
-
-    if (!isValid) {
-      // Mark payment as failed
-      await PaymentService.updateByOrderId(razorpay_order_id, {
-        status: 'failed',
-        failureReason: 'Invalid signature'
-      });
-
+    if (razorpay_signature !== expectedSign) {
       return res.status(400).json({
         success: false,
         error: 'Invalid payment signature'
       });
     }
 
-    // Payment is verified! Update database
-    const payment = await PaymentService.updateByOrderId(razorpay_order_id, {
+    // Payment verified! Update database
+    const payment = await PaymentService.updateStatus(razorpay_order_id, {
       razorpayPaymentId: razorpay_payment_id,
-      status: 'success',
-      paidAt: new Date()
+      razorpaySignature: razorpay_signature,
+      status: 'captured'
     });
 
-    if (!payment) {
-      return res.status(404).json({ error: 'Payment record not found' });
-    }
-
     // Upgrade user tier
-    const planDetails = PLANS[plan];
+    const subscriptionStart = new Date();
     const subscriptionEnd = new Date();
-    subscriptionEnd.setMonth(subscriptionEnd.getMonth() + 1); // 1 month
+    subscriptionEnd.setMonth(subscriptionEnd.getMonth() + 1); // Monthly
 
     const user = await UserService.upgradeTier(req.user.id, plan, {
       subscriptionId: razorpay_payment_id,
       subscriptionStatus: 'active',
-      subscriptionStart: new Date(),
+      subscriptionStart,
       subscriptionEnd
     });
 
     // Create success notification
     await NotificationService.create(req.user.id, {
       title: 'Payment Successful! 🎉',
-      message: `You've been upgraded to ${planDetails.name} tier with ${planDetails.credits} credits`,
+      message: `You've successfully upgraded to ${PLANS[plan].name}. ${PLANS[plan].credits} credits added to your account.`,
       type: 'success',
       actionUrl: '/dashboard',
       actionText: 'View Dashboard'
+    });
+
+    // Update analytics
+    await AnalyticsService.record(req.user.id, {
+      revenueGenerated: { increment: payment.amount }
     });
 
     // Log activity
     await ActivityLogService.log({
       userId: req.user.id,
       action: 'payment_success',
+      resource: 'payment',
+      resourceId: payment.id,
       metadata: { 
         plan, 
-        amount: payment.amount,
+        amount: payment.amount / 100,
         paymentId: razorpay_payment_id 
       }
     });
 
     // Send confirmation email
     EmailService.sendPaymentSuccess(
-      user.email,
-      user.name,
-      planDetails.name,
-      planDetails.price,
-      planDetails.credits,
-      subscriptionEnd
+      user.email, 
+      user.name, 
+      PLANS[plan].name, 
+      `₹${(payment.amount / 100).toLocaleString('en-IN')}`
     );
 
     res.json({
       success: true,
-      message: 'Payment verified and account upgraded',
-      payment: {
-        id: payment.id,
-        order_id: razorpay_order_id,
-        payment_id: razorpay_payment_id,
-        amount: payment.amount,
-        status: payment.status
-      },
+      message: 'Payment verified successfully',
+      order_id: razorpay_order_id,
+      payment_id: razorpay_payment_id,
+      plan: PLANS[plan],
       user: {
         tier: user.tier,
         credits: user.credits,
-        subscription_end: user.subscriptionEnd
+        subscriptionStatus: user.subscriptionStatus,
+        subscriptionEnd: user.subscriptionEnd
       }
     });
 
@@ -274,17 +262,42 @@ router.post('/verify', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// GET USER PAYMENT HISTORY
+// GET USER PAYMENTS
 // ==========================================
+
 router.get('/history', authenticateToken, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
-    const payments = await PaymentService.getUserPayments(req.user.id, limit);
+    const limit = parseInt(req.query.limit) || 10;
+    const status = req.query.status; // 'captured', 'failed', etc.
+
+    let payments = await PaymentService.getUserPayments(req.user.id);
+
+    // Filter by status if provided
+    if (status) {
+      payments = payments.filter(p => p.status === status);
+    }
+
+    // Limit results
+    payments = payments.slice(0, limit);
+
+    // Format for frontend
+    const formatted = payments.map(payment => ({
+      id: payment.id,
+      orderId: payment.razorpayOrderId,
+      paymentId: payment.razorpayPaymentId,
+      amount: payment.amount / 100, // Convert to rupees
+      currency: payment.currency,
+      status: payment.status,
+      plan: payment.planName,
+      date: payment.createdAt,
+      paidAt: payment.paidAt,
+      receipt: payment.receipt
+    }));
 
     res.json({
       success: true,
-      payments,
-      total: payments.length
+      payments: formatted,
+      total: formatted.length
     });
 
   } catch (error) {
@@ -296,6 +309,7 @@ router.get('/history', authenticateToken, async (req, res) => {
 // ==========================================
 // GET PAYMENT BY ID
 // ==========================================
+
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const payment = await PaymentService.findById(req.params.id);
@@ -311,7 +325,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      payment
+      payment: {
+        ...payment,
+        amount: payment.amount / 100 // Convert to rupees
+      }
     });
 
   } catch (error) {
@@ -321,18 +338,94 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// RAZORPAY WEBHOOK
+// GET PAYMENT STATISTICS
 // ==========================================
-router.post('/webhook', async (req, res) => {
+
+router.get('/stats/summary', authenticateToken, async (req, res) => {
   try {
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-    
-    if (!secret) {
-      console.error('RAZORPAY_WEBHOOK_SECRET not configured');
-      return res.status(500).json({ error: 'Webhook not configured' });
+    const totalRevenue = await PaymentService.getTotalRevenue(req.user.id);
+    const successfulPayments = await PaymentService.getSuccessfulPayments(req.user.id);
+    const allPayments = await PaymentService.getUserPayments(req.user.id);
+
+    const stats = {
+      totalRevenue: totalRevenue / 100, // Convert to rupees
+      totalPayments: successfulPayments.length,
+      failedPayments: allPayments.filter(p => p.status === 'failed').length,
+      lastPayment: successfulPayments.length > 0 ? {
+        date: successfulPayments[0].paidAt,
+        amount: successfulPayments[0].amount / 100,
+        plan: successfulPayments[0].planName
+      } : null,
+      revenueByMonth: calculateRevenueByMonth(successfulPayments)
+    };
+
+    res.json({
+      success: true,
+      stats
+    });
+
+  } catch (error) {
+    console.error('Get payment stats error:', error);
+    res.status(500).json({ error: 'Failed to get payment stats' });
+  }
+});
+
+// ==========================================
+// CANCEL SUBSCRIPTION
+// ==========================================
+
+router.post('/subscription/cancel', authenticateToken, async (req, res) => {
+  try {
+    const user = await UserService.findById(req.user.id);
+
+    if (!user.subscriptionId) {
+      return res.status(400).json({ error: 'No active subscription' });
     }
 
+    // Update subscription status
+    await UserService.update(req.user.id, {
+      subscriptionStatus: 'cancelled'
+    });
+
+    // Create notification
+    await NotificationService.create(req.user.id, {
+      title: 'Subscription Cancelled',
+      message: `Your ${user.tier} subscription has been cancelled. You can continue using your credits until ${new Date(user.subscriptionEnd).toLocaleDateString()}.`,
+      type: 'warning',
+      actionUrl: '/pricing',
+      actionText: 'Reactivate'
+    });
+
+    // Log activity
+    await ActivityLogService.log({
+      userId: req.user.id,
+      action: 'subscription_cancelled',
+      metadata: { 
+        tier: user.tier,
+        subscriptionId: user.subscriptionId 
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription cancelled successfully',
+      validUntil: user.subscriptionEnd
+    });
+
+  } catch (error) {
+    console.error('Cancel subscription error:', error);
+    res.status(500).json({ error: 'Failed to cancel subscription' });
+  }
+});
+
+// ==========================================
+// RAZORPAY WEBHOOK
+// ==========================================
+
+router.post('/webhook', async (req, res) => {
+  try {
     const signature = req.headers['x-razorpay-signature'];
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
     // Verify webhook signature
     const expectedSignature = crypto
@@ -341,7 +434,6 @@ router.post('/webhook', async (req, res) => {
       .digest('hex');
 
     if (signature !== expectedSignature) {
-      console.error('Invalid webhook signature');
       return res.status(400).json({ error: 'Invalid signature' });
     }
 
@@ -350,7 +442,7 @@ router.post('/webhook', async (req, res) => {
 
     console.log(`📥 Webhook received: ${event}`);
 
-    // Handle different webhook events
+    // Handle different events
     switch (event) {
       case 'payment.captured':
         await handlePaymentCaptured(payload);
@@ -381,181 +473,62 @@ router.post('/webhook', async (req, res) => {
 });
 
 // ==========================================
-// CREATE SUBSCRIPTION
+// HELPER FUNCTIONS
 // ==========================================
-router.post('/create-subscription', authenticateToken, async (req, res) => {
-  try {
-    const { plan } = req.body;
 
-    if (!PLANS[plan]) {
-      return res.status(400).json({ error: 'Invalid plan' });
-    }
+function calculateRevenueByMonth(payments) {
+  const byMonth = {};
+  
+  payments.forEach(payment => {
+    const month = new Date(payment.paidAt).toISOString().slice(0, 7); // YYYY-MM
+    byMonth[month] = (byMonth[month] || 0) + (payment.amount / 100);
+  });
 
-    const planDetails = PLANS[plan];
-
-    // Check if plan ID is configured
-    const planId = process.env[`RAZORPAY_PLAN_${plan.toUpperCase()}`];
-    
-    if (!planId) {
-      return res.status(500).json({ 
-        error: 'Subscription plan not configured on Razorpay' 
-      });
-    }
-
-    // Create Razorpay subscription
-    const subscription = await razorpay.subscriptions.create({
-      plan_id: planId,
-      customer_notify: 1,
-      total_count: 12, // 12 months
-      quantity: 1,
-      notes: {
-        plan: plan,
-        userId: req.user.id
-      }
-    });
-
-    res.json({
-      success: true,
-      subscription: {
-        id: subscription.id,
-        status: subscription.status,
-        plan_id: subscription.plan_id
-      }
-    });
-
-  } catch (error) {
-    console.error('Create subscription error:', error);
-    res.status(500).json({ 
-      error: 'Failed to create subscription',
-      message: error.message 
-    });
-  }
-});
-
-// ==========================================
-// CANCEL SUBSCRIPTION
-// ==========================================
-router.post('/cancel-subscription', authenticateToken, async (req, res) => {
-  try {
-    const user = await UserService.findById(req.user.id);
-
-    if (!user.subscriptionId) {
-      return res.status(400).json({ error: 'No active subscription found' });
-    }
-
-    // Cancel on Razorpay
-    await razorpay.subscriptions.cancel(user.subscriptionId);
-
-    // Update user
-    await UserService.update(user.id, {
-      subscriptionStatus: 'cancelled'
-    });
-
-    // Create notification
-    await NotificationService.create(user.id, {
-      title: 'Subscription Cancelled',
-      message: 'Your subscription has been cancelled. You can continue using your current credits until the end of the billing period.',
-      type: 'warning'
-    });
-
-    // Log activity
-    await ActivityLogService.log({
-      userId: user.id,
-      action: 'subscription_cancelled',
-      metadata: { subscriptionId: user.subscriptionId }
-    });
-
-    res.json({
-      success: true,
-      message: 'Subscription cancelled successfully'
-    });
-
-  } catch (error) {
-    console.error('Cancel subscription error:', error);
-    res.status(500).json({ 
-      error: 'Failed to cancel subscription',
-      message: error.message 
-    });
-  }
-});
-
-// ==========================================
-// WEBHOOK HANDLERS
-// ==========================================
+  return Object.entries(byMonth)
+    .map(([month, revenue]) => ({ month, revenue }))
+    .sort((a, b) => b.month.localeCompare(a.month));
+}
 
 async function handlePaymentCaptured(payload) {
-  try {
-    const paymentEntity = payload.payment.entity;
-    const orderId = paymentEntity.order_id;
+  const payment = payload.payment.entity;
+  console.log('✅ Payment captured:', payment.id);
 
-    console.log(`✅ Payment captured: ${paymentEntity.id}`);
-
-    await PaymentService.updateByOrderId(orderId, {
-      razorpayPaymentId: paymentEntity.id,
-      status: 'success',
-      paidAt: new Date()
-    });
-
-  } catch (error) {
-    console.error('Handle payment captured error:', error);
-  }
+  // Update payment status in database
+  await PaymentService.updateByPaymentId(payment.id, {
+    status: 'captured'
+  });
 }
 
 async function handlePaymentFailed(payload) {
-  try {
-    const paymentEntity = payload.payment.entity;
-    const orderId = paymentEntity.order_id;
+  const payment = payload.payment.entity;
+  console.log('❌ Payment failed:', payment.id);
 
-    console.log(`❌ Payment failed: ${paymentEntity.id}`);
+  // Update payment status
+  await PaymentService.updateByPaymentId(payment.id, {
+    status: 'failed'
+  });
 
-    const payment = await PaymentService.updateByOrderId(orderId, {
-      status: 'failed',
-      failureReason: paymentEntity.error_description || 'Payment failed'
+  // Create notification
+  const userId = payment.notes?.userId;
+  if (userId) {
+    await NotificationService.create(userId, {
+      title: 'Payment Failed',
+      message: 'Your payment could not be processed. Please try again.',
+      type: 'error',
+      actionUrl: '/pricing',
+      actionText: 'Try Again'
     });
-
-    if (payment) {
-      // Notify user
-      await NotificationService.create(payment.userId, {
-        title: 'Payment Failed',
-        message: 'Your payment could not be processed. Please try again.',
-        type: 'error',
-        actionUrl: '/pricing',
-        actionText: 'Retry Payment'
-      });
-    }
-
-  } catch (error) {
-    console.error('Handle payment failed error:', error);
   }
 }
 
 async function handleSubscriptionCharged(payload) {
-  try {
-    const subscriptionEntity = payload.subscription.entity;
-    
-    console.log(`💳 Subscription charged: ${subscriptionEntity.id}`);
-
-    // Renew user credits
-    // Find user by subscription ID and add credits
-    // This is a placeholder - implement based on your needs
-
-  } catch (error) {
-    console.error('Handle subscription charged error:', error);
-  }
+  console.log('💳 Subscription charged');
+  // Handle recurring subscription charges
 }
 
 async function handleSubscriptionCancelled(payload) {
-  try {
-    const subscriptionEntity = payload.subscription.entity;
-    
-    console.log(`🚫 Subscription cancelled: ${subscriptionEntity.id}`);
-
-    // Update user subscription status
-    // This is a placeholder - implement based on your needs
-
-  } catch (error) {
-    console.error('Handle subscription cancelled error:', error);
-  }
+  console.log('🚫 Subscription cancelled via Razorpay');
+  // Handle cancellation from Razorpay dashboard
 }
 
 module.exports = router;

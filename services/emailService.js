@@ -1,22 +1,23 @@
-// Simple email service using console for now
-// In production, integrate SendGrid, Mailgun, or AWS SES
+// backend/services/emailService.js
+// Complete Email Service with all methods
 
 class EmailService {
-  static async sendWelcomeEmail(user) {
-    console.log('📧 Sending welcome email to:', user.email);
+  // Send welcome email
+  static async sendWelcome(email, name, credits) {
+    console.log(`📧 Sending welcome email to: ${email}`);
     
     const emailContent = {
-      to: user.email,
+      to: email,
       subject: '🎉 Welcome to Launch AI!',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #6366F1;">Welcome to Launch AI, ${user.name}! 🚀</h1>
+          <h1 style="color: #6366F1;">Welcome to Launch AI, ${name}! 🚀</h1>
           <p>You've successfully created your account!</p>
           
           <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <h2 style="margin: 0 0 10px 0;">Your Free Trial</h2>
             <p style="margin: 0; font-size: 24px; font-weight: bold; color: #6366F1;">
-              ${user.credits} Free Builds
+              ${credits} Free Builds
             </p>
           </div>
           
@@ -43,27 +44,74 @@ class EmailService {
       `
     };
 
-    // In production, actually send email:
-    // await sendgrid.send(emailContent);
+    // In production, integrate with SendGrid, Mailgun, or AWS SES:
+    // const sgMail = require('@sendgrid/mail');
+    // sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    // await sgMail.send(emailContent);
     
     return emailContent;
   }
 
-  static async sendPaymentConfirmation(user, plan, amount) {
-    console.log('💳 Sending payment confirmation to:', user.email);
+  // Send OTP email
+  static async sendOTP(email, code, name, type) {
+    console.log(`📧 Sending OTP to: ${email}`);
     
-    return {
-      to: user.email,
+    const titles = {
+      signup: 'Verify Your Email',
+      login: 'Login Verification Code',
+      reset: 'Password Reset Code'
+    };
+
+    const messages = {
+      signup: 'Welcome! Please verify your email to complete registration.',
+      login: 'Use this code to login to your account.',
+      reset: 'Use this code to reset your password.'
+    };
+
+    const emailContent = {
+      to: email,
+      subject: titles[type] || 'Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #6366F1;">${titles[type]}</h1>
+          <p>Hi ${name},</p>
+          <p>${messages[type]}</p>
+          
+          <div style="background: #f0f9ff; padding: 30px; border-radius: 8px; margin: 30px 0; text-align: center;">
+            <p style="margin: 0 0 10px 0; color: #6b7280;">Your verification code:</p>
+            <h2 style="margin: 0; font-size: 48px; letter-spacing: 10px; color: #6366F1;">
+              ${code}
+            </h2>
+          </div>
+          
+          <p style="color: #ef4444; font-weight: bold;">⏰ This code expires in 10 minutes</p>
+          
+          <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">
+            If you didn't request this code, please ignore this email.
+          </p>
+        </div>
+      `
+    };
+
+    return emailContent;
+  }
+
+  // Send payment success email
+  static async sendPaymentSuccess(email, name, planName, amount) {
+    console.log(`💳 Sending payment confirmation to: ${email}`);
+    
+    const emailContent = {
+      to: email,
       subject: '✅ Payment Successful - Launch AI',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h1 style="color: #10b981;">Payment Successful! ✅</h1>
-          <p>Hi ${user.name},</p>
-          <p>Thank you for upgrading to <strong>${plan}</strong>!</p>
+          <p>Hi ${name},</p>
+          <p>Thank you for upgrading to <strong>${planName}</strong>!</p>
           
           <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <h3 style="margin: 0 0 10px 0;">Payment Details</h3>
-            <p style="margin: 5px 0;"><strong>Plan:</strong> ${plan}</p>
+            <p style="margin: 5px 0;"><strong>Plan:</strong> ${planName}</p>
             <p style="margin: 5px 0;"><strong>Amount:</strong> ${amount}</p>
             <p style="margin: 5px 0;"><strong>Status:</strong> Active</p>
           </div>
@@ -83,18 +131,21 @@ class EmailService {
         </div>
       `
     };
+
+    return emailContent;
   }
 
-  static async sendAppReadyNotification(user, projectName, downloadUrl) {
-    console.log('🎉 Sending app ready notification to:', user.email);
+  // Send build complete notification
+  static async sendBuildComplete(email, name, projectName, downloadUrl) {
+    console.log(`🎉 Sending build complete notification to: ${email}`);
     
-    return {
-      to: user.email,
+    const emailContent = {
+      to: email,
       subject: `🎉 Your App "${projectName}" is Ready!`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h1 style="color: #6366F1;">Your App is Ready! 🎉</h1>
-          <p>Hi ${user.name},</p>
+          <p>Hi ${name},</p>
           <p>Great news! Your AI-generated app <strong>"${projectName}"</strong> is complete and ready to download.</p>
           
           <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
@@ -120,19 +171,22 @@ class EmailService {
         </div>
       `
     };
+
+    return emailContent;
   }
 
-  static async sendLowCreditsWarning(user) {
-    console.log('⚠️  Sending low credits warning to:', user.email);
+  // Send low credits warning
+  static async sendCreditsLow(email, name, remainingCredits) {
+    console.log(`⚠️  Sending low credits warning to: ${email}`);
     
-    return {
-      to: user.email,
+    const emailContent = {
+      to: email,
       subject: '⚠️ Running Low on Credits - Launch AI',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h1 style="color: #f59e0b;">Running Low on Credits ⚠️</h1>
-          <p>Hi ${user.name},</p>
-          <p>You have <strong>${user.credits} builds remaining</strong>.</p>
+          <p>Hi ${name},</p>
+          <p>You have <strong>${remainingCredits} builds remaining</strong>.</p>
           
           <p>Don't let your momentum stop! Upgrade now to keep building amazing apps.</p>
           
@@ -153,6 +207,76 @@ class EmailService {
         </div>
       `
     };
+
+    return emailContent;
+  }
+
+  // Send password reset success
+  static async sendPasswordResetSuccess(email, name) {
+    console.log(`🔐 Sending password reset confirmation to: ${email}`);
+    
+    const emailContent = {
+      to: email,
+      subject: '✅ Password Reset Successful',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #10b981;">Password Reset Successful ✅</h1>
+          <p>Hi ${name},</p>
+          <p>Your password has been successfully reset.</p>
+          
+          <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0;">✅ You can now login with your new password</p>
+          </div>
+          
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/login" 
+             style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 20px 0;">
+            Login Now →
+          </a>
+          
+          <p style="color: #ef4444; margin-top: 30px;">
+            ⚠️ If you didn't reset your password, please contact support immediately.
+          </p>
+        </div>
+      `
+    };
+
+    return emailContent;
+  }
+
+  // Send subscription cancelled
+  static async sendSubscriptionCancelled(email, name, validUntil) {
+    console.log(`❌ Sending subscription cancelled notification to: ${email}`);
+    
+    const emailContent = {
+      to: email,
+      subject: 'Subscription Cancelled - Launch AI',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h1 style="color: #f59e0b;">Subscription Cancelled</h1>
+          <p>Hi ${name},</p>
+          <p>Your subscription has been cancelled as requested.</p>
+          
+          <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0;">
+              You can continue using your remaining credits until <strong>${validUntil}</strong>
+            </p>
+          </div>
+          
+          <p>We're sorry to see you go! If you change your mind, you can reactivate your subscription anytime.</p>
+          
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing" 
+             style="display: inline-block; background: #6366F1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 20px 0;">
+            Reactivate Subscription →
+          </a>
+          
+          <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">
+            Have feedback? We'd love to hear why you cancelled: reply to this email
+          </p>
+        </div>
+      `
+    };
+
+    return emailContent;
   }
 }
 

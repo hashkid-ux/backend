@@ -1,11 +1,130 @@
 // backend/services/database.js
 // Complete Database Service Layer with Prisma
 
-import { PrismaClient } from '@prisma/client';
+const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
 });
+
+const NotificationService = {
+  // Create notification
+  async create(userId, data) {
+    return await prisma.notification.create({
+      data: {
+        userId,
+        ...data
+      }
+    });
+  },
+
+  // Find notification by ID
+  async findById(id) {
+    return await prisma.notification.findUnique({
+      where: { id }
+    });
+  },
+
+  // Get user notifications
+  async getUserNotifications(userId, unreadOnly = false) {
+    return await prisma.notification.findMany({
+      where: {
+        userId,
+        ...(unreadOnly && { read: false })
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    });
+  },
+
+  // Mark as read
+  async markAsRead(id) {
+    return await prisma.notification.update({
+      where: { id },
+      data: {
+        read: true,
+        readAt: new Date()
+      }
+    });
+  },
+
+  // Mark all as read
+  async markAllAsRead(userId) {
+    return await prisma.notification.updateMany({
+      where: {
+        userId,
+        read: false
+      },
+      data: {
+        read: true,
+        readAt: new Date()
+      }
+    });
+  },
+
+  // Delete notification
+  async delete(id) {
+    return await prisma.notification.delete({
+      where: { id }
+    });
+  },
+
+  // Delete all read notifications
+  async deleteAllRead(userId) {
+    return await prisma.notification.deleteMany({
+      where: {
+        userId,
+        read: true
+      }
+    });
+  },
+
+  // Get notification preferences (stored in user metadata or separate table)
+  async getPreferences(userId) {
+    // For now, return default preferences
+    // In production, store these in a separate UserPreferences table
+    return {
+      email: true,
+      push: true,
+      builds: true,
+      payments: true,
+      marketing: false
+    };
+  },
+
+  // Update notification preferences
+  async updatePreferences(userId, preferences) {
+    // In production, store these in UserPreferences table
+    // For now, just return the preferences
+    return preferences;
+  },
+
+  // Get notification statistics
+  async getStats(userId, days = 7) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId,
+        createdAt: { gte: startDate }
+      }
+    });
+
+    const byType = {};
+    notifications.forEach(n => {
+      byType[n.type] = (byType[n.type] || 0) + 1;
+    });
+
+    return {
+      total: notifications.length,
+      unread: notifications.filter(n => !n.read).length,
+      read: notifications.filter(n => n.read).length,
+      byType,
+      period: `Last ${days} days`
+    };
+  }
+};
 
 // ==========================================
 // CONNECTION MANAGEMENT
@@ -92,7 +211,9 @@ const UserService = {
         avatar: true,
         tier: true,
         credits: true,
-        emailVerified: true
+        emailVerified: true,
+        subscriptionStatus: true,
+        subscriptionEnd: true
       }
     });
   },
@@ -251,10 +372,38 @@ const PaymentService = {
     });
   },
 
-  // Update payment status
+  // Find payment by ID
+  async findById(id) {
+    return await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true
+          }
+        }
+      }
+    });
+  },
+
+  // Update payment status by order ID
   async updateStatus(razorpayOrderId, data) {
     return await prisma.payment.update({
       where: { razorpayOrderId },
+      data: {
+        ...data,
+        paidAt: data.status === 'captured' ? new Date() : undefined,
+        failedAt: data.status === 'failed' ? new Date() : undefined
+      }
+    });
+  },
+
+  // Update payment by payment ID
+  async updateByPaymentId(razorpayPaymentId, data) {
+    return await prisma.payment.updateMany({
+      where: { razorpayPaymentId },
       data: {
         ...data,
         paidAt: data.status === 'captured' ? new Date() : undefined,
@@ -312,6 +461,13 @@ const NotificationService = {
     });
   },
 
+  // Find notification by ID
+  async findById(id) {
+    return await prisma.notification.findUnique({
+      where: { id }
+    });
+  },
+
   // Get user notifications
   async getUserNotifications(userId, unreadOnly = false) {
     return await prisma.notification.findMany({
@@ -354,6 +510,62 @@ const NotificationService = {
     return await prisma.notification.delete({
       where: { id }
     });
+  },
+
+  // Delete all read notifications
+  async deleteAllRead(userId) {
+    return await prisma.notification.deleteMany({
+      where: {
+        userId,
+        read: true
+      }
+    });
+  },
+
+  // Get notification preferences
+  async getPreferences(userId) {
+    // For now, return default preferences
+    // In production, store these in a separate UserPreferences table
+    return {
+      email: true,
+      push: true,
+      builds: true,
+      payments: true,
+      marketing: false
+    };
+  },
+
+  // Update notification preferences
+  async updatePreferences(userId, preferences) {
+    // In production, store these in UserPreferences table
+    // For now, just return the preferences
+    return preferences;
+  },
+
+  // Get notification statistics
+  async getStats(userId, days = 7) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const notifications = await prisma.notification.findMany({
+      where: {
+        userId,
+        createdAt: { gte: startDate }
+      }
+    });
+
+    const byType = {};
+    notifications.forEach(n => {
+      byType[n.type] = (byType[n.type] || 0) + 1;
+    });
+
+    return {
+      total: notifications.length,
+      unread: notifications.filter(n => !n.read).length,
+      read: notifications.filter(n => n.read).length,
+      byType,
+      period: `Last ${days} days`
+    };
   }
 };
 
@@ -571,7 +783,7 @@ setInterval(runCleanupJobs, 60 * 60 * 1000);
 // EXPORTS
 // ==========================================
 
-export default {
+module.exports = {
   prisma,
   connectDatabase,
   disconnectDatabase,
