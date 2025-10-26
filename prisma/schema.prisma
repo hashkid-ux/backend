@@ -1,0 +1,326 @@
+// backend/prisma/schema.prisma
+// Complete Production-Ready Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// USER MANAGEMENT
+// ==========================================
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  name              String
+  password          String?   // NULL for OAuth users
+  avatar            String?
+  
+  // OAuth
+  googleId          String?   @unique
+  githubId          String?   @unique
+  githubUsername    String?
+  provider          String?   // 'google', 'github', 'email'
+  
+  // Verification
+  emailVerified     Boolean   @default(false)
+  verificationToken String?   @unique
+  verificationExpiry DateTime?
+  
+  // Password Reset
+  resetToken        String?   @unique
+  resetTokenExpiry  DateTime?
+  
+  // Subscription
+  tier              String    @default("free") // 'free', 'starter', 'premium'
+  credits           Int       @default(3)
+  subscriptionId    String?   // Razorpay subscription ID
+  subscriptionStatus String?  // 'active', 'cancelled', 'expired'
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+  
+  // Metadata
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastLoginAt       DateTime?
+  isActive          Boolean   @default(true)
+  isBanned          Boolean   @default(false)
+  banReason         String?
+  
+  // Relations
+  projects          Project[]
+  payments          Payment[]
+  notifications     Notification[]
+  analytics         UserAnalytics[]
+  sessions          Session[]
+  activityLogs      ActivityLog[]
+  
+  @@index([email])
+  @@index([tier])
+  @@index([createdAt])
+}
+
+// ==========================================
+// SESSION MANAGEMENT (Redis alternative)
+// ==========================================
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  token        String   @unique
+  refreshToken String?  @unique
+  expiresAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime @default(now())
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ==========================================
+// PROJECT MANAGEMENT
+// ==========================================
+
+model Project {
+  id               String   @id @default(uuid())
+  name             String
+  description      String   @db.Text
+  prompt           String   @db.Text
+  
+  // Generated Assets
+  filesGenerated   Int      @default(0)
+  linesOfCode      Int      @default(0)
+  downloadUrl      String?
+  deploymentUrl    String?
+  
+  // Status
+  status           String   @default("building") // 'building', 'completed', 'failed', 'deployed'
+  buildProgress    Int      @default(0)
+  
+  // QA Results
+  qaScore          Int?
+  deploymentReady  Boolean  @default(false)
+  
+  // Build Data (JSON)
+  buildData        Json?    // Stores full build results
+  researchData     Json?    // Market research
+  competitorData   Json?    // Competitor analysis
+  
+  // Tech Stack
+  framework        String?  // 'react', 'nextjs'
+  database         String?  // 'postgresql', 'mongodb'
+  targetPlatform   String?  // 'web', 'mobile', 'both'
+  
+  // Metadata
+  userId           String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  completedAt      DateTime?
+  downloadedAt     DateTime?
+  
+  // Relations
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ==========================================
+// PAYMENT & BILLING
+// ==========================================
+
+model Payment {
+  id                  String   @id @default(uuid())
+  userId              String
+  
+  // Razorpay
+  razorpayOrderId     String   @unique
+  razorpayPaymentId   String?  @unique
+  razorpaySignature   String?
+  
+  // Payment Details
+  amount              Int      // in paise (INR)
+  currency            String   @default("INR")
+  status              String   @default("created") // 'created', 'authorized', 'captured', 'failed', 'refunded'
+  
+  // Plan Details
+  planId              String   // 'starter', 'premium'
+  planName            String
+  planDuration        String   // 'monthly', 'yearly'
+  
+  // Metadata
+  receipt             String?
+  notes               Json?
+  invoiceUrl          String?
+  
+  // Timestamps
+  createdAt           DateTime @default(now())
+  paidAt              DateTime?
+  failedAt            DateTime?
+  refundedAt          DateTime?
+  
+  // Relations
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ==========================================
+// NOTIFICATIONS
+// ==========================================
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  
+  // Content
+  title       String
+  message     String   @db.Text
+  type        String   // 'info', 'success', 'warning', 'error', 'build', 'payment'
+  
+  // Status
+  read        Boolean  @default(false)
+  readAt      DateTime?
+  
+  // Action
+  actionUrl   String?
+  actionText  String?
+  
+  // Metadata
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// ==========================================
+// ANALYTICS
+// ==========================================
+
+model UserAnalytics {
+  id                String   @id @default(uuid())
+  userId            String
+  date              DateTime @default(now())
+  
+  // Usage Metrics
+  buildsStarted     Int      @default(0)
+  buildsCompleted   Int      @default(0)
+  buildsFailed      Int      @default(0)
+  downloadsCount    Int      @default(0)
+  deploymentsCount  Int      @default(0)
+  
+  // Engagement
+  pageViews         Int      @default(0)
+  sessionDuration   Int      @default(0) // in seconds
+  featuresUsed      String[] // array of feature names
+  
+  // Revenue
+  revenueGenerated  Int      @default(0) // in paise
+  
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, date])
+  @@index([userId])
+  @@index([date])
+}
+
+// ==========================================
+// ACTIVITY LOGS
+// ==========================================
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  userId      String
+  
+  // Activity
+  action      String   // 'login', 'logout', 'build_start', 'build_complete', etc.
+  resource    String?  // 'project', 'payment', 'user'
+  resourceId  String?
+  
+  // Details
+  description String?  @db.Text
+  metadata    Json?
+  
+  // Context
+  ipAddress   String?
+  userAgent   String?
+  
+  // Timestamp
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ==========================================
+// EMAIL VERIFICATION CODES (OTP)
+// ==========================================
+
+model VerificationCode {
+  id         String   @id @default(uuid())
+  email      String
+  code       String   // 6-digit OTP
+  type       String   // 'signup', 'login', 'reset'
+  attempts   Int      @default(0)
+  maxAttempts Int     @default(5)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+  
+  @@index([email])
+  @@index([code])
+  @@index([expiresAt])
+}
+
+// ==========================================
+// SYSTEM CONFIGURATION
+// ==========================================
+
+model SystemConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// ADMIN ACTIONS
+// ==========================================
+
+model AdminAction {
+  id          String   @id @default(uuid())
+  adminEmail  String
+  action      String   // 'ban_user', 'refund', 'give_credits', etc.
+  targetId    String?  // user ID, payment ID, etc.
+  reason      String?  @db.Text
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  
+  @@index([adminEmail])
+  @@index([action])
+  @@index([createdAt])
+}
