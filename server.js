@@ -105,7 +105,7 @@ app.get('/health', (req, res) => {
 // ==========================================
 
 // Authentication routes
-const { router: authRouter } = require('./routes/authWithDB');
+const { router: authRouter } = require('./routes/authWithDb');
 const { router: authOAuthRouter } = require('./routes/authOAuthWithDB');
 
 // Resource routes

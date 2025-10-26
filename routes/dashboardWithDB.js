@@ -11,7 +11,7 @@ const {
   ActivityLogService,
   NotificationService
 } = require('../services/database');
-const { authenticateToken } = require('./authWithDB');
+const { authenticateToken } = require('./authWithDb');
 
 // ==========================================
 // GET DASHBOARD OVERVIEW

@@ -13,7 +13,7 @@ const {
   AnalyticsService 
 } = require('../services/database');
 const EmailService = require('../services/emailService');
-const { authenticateToken } = require('./authWithDB');
+const { authenticateToken } = require('./authWithDb');
 
 // ==========================================
 // INITIALIZE RAZORPAY

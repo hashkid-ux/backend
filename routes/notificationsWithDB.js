@@ -7,7 +7,7 @@ const {
   NotificationService,
   ActivityLogService 
 } = require('../services/database');
-const { authenticateToken } = require('./authWithDB');
+const { authenticateToken } = require('./authWithDb');
 
 // ==========================================
 // GET ALL NOTIFICATIONS
