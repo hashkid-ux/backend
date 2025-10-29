@@ -20,23 +20,13 @@ app.set('trust proxy', 1);
 // ==========================================
 // SESSION MIDDLEWARE
 // ==========================================
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-session-secret-change-this',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
-  }
-}));
+// Removed unused session middleware
 
 // ==========================================
 // INITIALIZE PASSPORT (OAuth)
 // ==========================================
 const { passport } = require('./routes/authOAuthWithDB');
 app.use(passport.initialize());
-app.use(passport.session());
 
 // ==========================================
 // SECURITY MIDDLEWARE
@@ -113,6 +103,8 @@ const projectsRouter = require('./routes/projectsWithDB');
 const paymentsRouter = require('./routes/paymentsWithDB');
 const notificationsRouter = require('./routes/notificationsWithDB');
 const dashboardRouter = require('./routes/dashboardWithDB');
+const settingsRouter = require('./routes/settingsWithDB');
+const profileRouter = require('./routes/profileWithDB');
 
 // Legacy routes (keep for compatibility)
 const validateRouter = require('./routes/validate');
@@ -128,6 +120,8 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/settings', settingsRouter);
+app.use('/api/profile', profileRouter);
 
 // Legacy routes
 app.use('/api/validate', validateRouter);

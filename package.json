@@ -18,7 +18,7 @@
     "seed": "node prisma/seed.js"
   },
   "keywords": ["ai", "startup", "saas"],
-  "author": "Yash",
+  "author": "Launch AI",
   "license": "MIT",
   "engines": {
     "node": ">=20.18.0",

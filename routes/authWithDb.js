@@ -1,5 +1,5 @@
 // backend/routes/authWithDB.js
-// Complete Authentication with Database + OTP
+// Complete Authentication with Database + OTP + Direct Signup
 
 const express = require('express');
 const router = express.Router();
@@ -26,19 +26,14 @@ const authenticateToken = async (req, res, next) => {
   }
 
   try {
-    // Verify JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Check session in DB
     const session = await SessionService.findByToken(token);
     
     if (!session || session.expiresAt < new Date()) {
       return res.status(403).json({ error: 'Token expired' });
     }
 
-    // Update last used
     await SessionService.updateLastUsed(token);
-    
     req.user = session.user;
     req.session = session;
     next();
@@ -48,16 +43,15 @@ const authenticateToken = async (req, res, next) => {
 };
 
 // ==========================================
-// STEP 1: REQUEST OTP FOR SIGNUP
+// DIRECT SIGNUP (NO OTP)
 // ==========================================
 
-router.post('/signup/request-otp', async (req, res) => {
+router.post('/signup', async (req, res) => {
   try {
-    const { email, name } = req.body;
+    const { email, name, password } = req.body;
 
-    // Validation
-    if (!email || !name) {
-      return res.status(400).json({ error: 'Email and name required' });
+    if (!email || !name || !password) {
+      return res.status(400).json({ error: 'All fields required' });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -65,69 +59,27 @@ router.post('/signup/request-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email' });
     }
 
-    // Check if user exists
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
     const existingUser = await UserService.findByEmail(email);
     if (existingUser) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    // Generate OTP
-    const verification = await VerificationCodeService.create(email, 'signup');
-    
-    // Send OTP email
-    await EmailService.sendOTP(email, verification.code, name, 'signup');
-
-    res.json({
-      success: true,
-      message: 'OTP sent to your email',
-      expiresIn: 600 // 10 minutes in seconds
-    });
-
-  } catch (error) {
-    console.error('Request OTP error:', error);
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
-});
-
-// ==========================================
-// STEP 2: VERIFY OTP & CREATE ACCOUNT
-// ==========================================
-
-router.post('/signup/verify-otp', async (req, res) => {
-  try {
-    const { email, otp, name, password } = req.body;
-
-    // Validation
-    if (!email || !otp || !name || !password) {
-      return res.status(400).json({ error: 'All fields required' });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-
-    // Verify OTP
-    const verification = await VerificationCodeService.verify(email, otp, 'signup');
-    
-    if (!verification) {
-      return res.status(400).json({ error: 'Invalid or expired OTP' });
-    }
-
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     const user = await UserService.create({
       email,
       name,
       password: hashedPassword,
-      emailVerified: true, // Verified via OTP
+      emailVerified: true,
       provider: 'email',
       tier: 'free',
       credits: 3
     });
 
-    // Create session
     const token = jwt.sign(
       { id: user.id, email: user.email },
       process.env.JWT_SECRET,
@@ -145,7 +97,6 @@ router.post('/signup/verify-otp', async (req, res) => {
       userAgent: req.headers['user-agent']
     });
 
-    // Log activity
     await ActivityLogService.log({
       userId: user.id,
       action: 'signup',
@@ -155,8 +106,130 @@ router.post('/signup/verify-otp', async (req, res) => {
       userAgent: req.headers['user-agent']
     });
 
-    // Send welcome email (async, don't wait)
-    EmailService.sendWelcome(email, name, user.credits);
+    EmailService.sendWelcome(email, name, user.credits).catch(err => {
+      console.error('Failed to send welcome email:', err);
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        tier: user.tier,
+        credits: user.credits,
+        emailVerified: user.emailVerified
+      }
+    });
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ error: 'Signup failed' });
+  }
+});
+
+// ==========================================
+// OTP SIGNUP - STEP 1: REQUEST OTP
+// ==========================================
+
+router.post('/signup/request-otp', async (req, res) => {
+  try {
+    const { email, name } = req.body;
+
+    if (!email || !name) {
+      return res.status(400).json({ error: 'Email and name required' });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+
+    const existingUser = await UserService.findByEmail(email);
+    if (existingUser) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+
+    const verification = await VerificationCodeService.create(email, 'signup');
+    
+    await EmailService.sendOTP(email, verification.code, name, 'signup');
+
+    res.json({
+      success: true,
+      message: 'OTP sent to your email',
+      expiresIn: 600
+    });
+
+  } catch (error) {
+    console.error('Request OTP error:', error);
+    res.status(500).json({ error: 'Failed to send OTP' });
+  }
+});
+
+// ==========================================
+// OTP SIGNUP - STEP 2: VERIFY OTP & CREATE ACCOUNT
+// ==========================================
+
+router.post('/signup/verify-otp', async (req, res) => {
+  try {
+    const { email, otp, name, password } = req.body;
+
+    if (!email || !otp || !name || !password) {
+      return res.status(400).json({ error: 'All fields required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const verification = await VerificationCodeService.verify(email, otp, 'signup');
+    
+    if (!verification) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await UserService.create({
+      email,
+      name,
+      password: hashedPassword,
+      emailVerified: true,
+      provider: 'email',
+      tier: 'free',
+      credits: 3
+    });
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    await SessionService.create({
+      userId: user.id,
+      token,
+      expiresAt,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    await ActivityLogService.log({
+      userId: user.id,
+      action: 'signup',
+      resource: 'user',
+      resourceId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    EmailService.sendWelcome(email, name, user.credits).catch(err => {
+      console.error('Failed to send welcome email:', err);
+    });
 
     res.json({
       success: true,
@@ -189,14 +262,12 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // Find user
     const user = await UserService.findByEmail(email);
     
     if (!user || !user.password) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if banned
     if (user.isBanned) {
       return res.status(403).json({ 
         error: 'Account suspended', 
@@ -204,22 +275,12 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Verify password
     const validPassword = await bcrypt.compare(password, user.password);
     
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if email verified
-    if (!user.emailVerified) {
-      return res.status(403).json({ 
-        error: 'Email not verified',
-        requiresVerification: true
-      });
-    }
-
-    // Create session
     const token = jwt.sign(
       { id: user.id, email: user.email },
       process.env.JWT_SECRET,
@@ -237,10 +298,8 @@ router.post('/login', async (req, res) => {
       userAgent: req.headers['user-agent']
     });
 
-    // Update last login
     await UserService.updateLastLogin(user.id);
 
-    // Log activity
     await ActivityLogService.log({
       userId: user.id,
       action: 'login',
@@ -280,7 +339,6 @@ router.get('/me', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Get user stats
     const stats = await UserService.getStats(user.id);
 
     res.json({
@@ -310,10 +368,8 @@ router.get('/me', authenticateToken, async (req, res) => {
 
 router.post('/logout', authenticateToken, async (req, res) => {
   try {
-    // Delete session
     await SessionService.delete(req.session.token);
 
-    // Log activity
     await ActivityLogService.log({
       userId: req.user.id,
       action: 'logout',
@@ -343,7 +399,6 @@ router.put('/profile', authenticateToken, async (req, res) => {
 
     const user = await UserService.update(req.user.id, updateData);
 
-    // Log activity
     await ActivityLogService.log({
       userId: req.user.id,
       action: 'profile_update',
@@ -375,23 +430,28 @@ router.post('/password/reset-request', async (req, res) => {
 
     const user = await UserService.findByEmail(email);
     
-    // Don't reveal if email exists
     if (!user) {
       return res.json({ 
         success: true, 
-        message: 'If email exists, reset code sent' 
+        message: 'If email exists, reset instructions sent' 
       });
     }
 
-    // Generate OTP
-    const verification = await VerificationCodeService.create(email, 'reset');
-    
-    // Send reset email with OTP
-    await EmailService.sendOTP(email, verification.code, user.name, 'reset');
+    const resetToken = require('crypto').randomBytes(32).toString('hex');
+    const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
+
+    await UserService.update(user.id, {
+      resetToken,
+      resetTokenExpiry
+    });
+
+    EmailService.sendPasswordReset(email, user.name, resetToken).catch(err => {
+      console.error('Failed to send reset email:', err);
+    });
 
     res.json({ 
       success: true, 
-      message: 'Reset code sent to your email' 
+      message: 'Reset instructions sent to your email' 
     });
 
   } catch (error) {
@@ -401,49 +461,42 @@ router.post('/password/reset-request', async (req, res) => {
 });
 
 // ==========================================
-// VERIFY RESET OTP & CHANGE PASSWORD
+// RESET PASSWORD WITH TOKEN
 // ==========================================
 
-router.post('/password/reset-verify', async (req, res) => {
+router.post('/password/reset', async (req, res) => {
   try {
-    const { email, otp, newPassword } = req.body;
+    const { token, newPassword } = req.body;
 
-    if (!email || !otp || !newPassword) {
-      return res.status(400).json({ error: 'All fields required' });
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password required' });
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // Verify OTP
-    const verification = await VerificationCodeService.verify(email, otp, 'reset');
+    const user = await UserService.findByResetToken(token);
     
-    if (!verification) {
-      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    if (!user || !user.resetTokenExpiry || user.resetTokenExpiry < new Date()) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
-    // Find user
-    const user = await UserService.findByEmail(email);
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password
     await UserService.update(user.id, {
-      password: hashedPassword
+      password: hashedPassword,
+      resetToken: null,
+      resetTokenExpiry: null
     });
 
-    // Log activity
     await ActivityLogService.log({
       userId: user.id,
-      action: 'password_reset',
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      action: 'password_reset'
+    });
+
+    EmailService.sendPasswordResetSuccess(user.email, user.name).catch(err => {
+      console.error('Failed to send confirmation email:', err);
     });
 
     res.json({
@@ -458,7 +511,58 @@ router.post('/password/reset-verify', async (req, res) => {
 });
 
 // ==========================================
-// USE CREDIT (Deduct when building)
+// CHANGE PASSWORD (AUTHENTICATED)
+// ==========================================
+
+router.post('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await UserService.findById(req.user.id);
+
+    if (user.password) {
+      const validPassword = await bcrypt.compare(currentPassword, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Current password incorrect' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Cannot change password for OAuth accounts' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await UserService.update(user.id, {
+      password: hashedPassword
+    });
+
+    await ActivityLogService.log({
+      userId: user.id,
+      action: 'password_changed',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// ==========================================
+// USE CREDIT
 // ==========================================
 
 router.post('/use-credit', authenticateToken, async (req, res) => {
@@ -476,15 +580,14 @@ router.post('/use-credit', authenticateToken, async (req, res) => {
       });
     }
 
-    // Deduct credit
     await UserService.deductCredit(user.id);
 
-    // Check if low on credits
-    if (user.credits === 4) { // Was 4, now 3 after deduction
-      EmailService.sendCreditsLow(user.email, user.name, 3);
+    if (user.credits === 4) {
+      EmailService.sendCreditsLow(user.email, user.name, 3).catch(err => {
+        console.error('Failed to send low credits email:', err);
+      });
     }
 
-    // Log activity
     await ActivityLogService.log({
       userId: user.id,
       action: 'credit_used',
@@ -503,7 +606,7 @@ router.post('/use-credit', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// UPGRADE TIER (After payment)
+// UPGRADE TIER
 // ==========================================
 
 router.post('/upgrade', authenticateToken, async (req, res) => {
@@ -517,7 +620,7 @@ router.post('/upgrade', authenticateToken, async (req, res) => {
 
     const subscriptionStart = new Date();
     const subscriptionEnd = new Date();
-    subscriptionEnd.setMonth(subscriptionEnd.getMonth() + 1); // Monthly
+    subscriptionEnd.setMonth(subscriptionEnd.getMonth() + 1);
 
     const user = await UserService.upgradeTier(req.user.id, tier, {
       subscriptionId,
@@ -527,7 +630,6 @@ router.post('/upgrade', authenticateToken, async (req, res) => {
       ...subscriptionData
     });
 
-    // Log activity
     await ActivityLogService.log({
       userId: req.user.id,
       action: 'tier_upgraded',
@@ -568,61 +670,6 @@ router.get('/projects', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Get projects error:', error);
     res.status(500).json({ error: 'Failed to get projects' });
-  }
-});
-
-// ==========================================
-// CHANGE PASSWORD (Authenticated)
-// ==========================================
-
-router.post('/change-password', authenticateToken, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Current and new password required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-
-    const user = await UserService.findById(req.user.id);
-
-    // Verify current password
-    if (user.password) {
-      const validPassword = await bcrypt.compare(currentPassword, user.password);
-      if (!validPassword) {
-        return res.status(401).json({ error: 'Current password incorrect' });
-      }
-    } else {
-      return res.status(400).json({ error: 'Cannot change password for OAuth accounts' });
-    }
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password
-    await UserService.update(user.id, {
-      password: hashedPassword
-    });
-
-    // Log activity
-    await ActivityLogService.log({
-      userId: user.id,
-      action: 'password_changed',
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
-    });
-
-    res.json({
-      success: true,
-      message: 'Password changed successfully'
-    });
-
-  } catch (error) {
-    console.error('Change password error:', error);
-    res.status(500).json({ error: 'Failed to change password' });
   }
 });
 

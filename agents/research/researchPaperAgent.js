@@ -1,15 +1,16 @@
 // backend/agents/research/researchPaperAgent.js
-const Anthropic = require('@anthropic-ai/sdk');
+//const Anthropic = require('@anthropic-ai/sdk');
+const AIClient = require('../../services/aiClient');
 const axios = require('axios');
 const WebScraper = require('./webScraper');
 
 class ResearchPaperAgent {
   constructor(tier = 'premium') {
     this.tier = tier;
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY
-    });
-    this.model = 'claude-sonnet-4-5-20250929';
+    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+
+    this.model = 'deepseek/deepseek-chat';
+
     this.scraper = new WebScraper();
   }
 

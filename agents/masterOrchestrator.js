@@ -1,5 +1,7 @@
 // backend/agents/masterOrchestrator.js
-const Anthropic = require('@anthropic-ai/sdk');
+//const Anthropic = require('@anthropic-ai/sdk');
+const AIClient = require('../services/aiClient');
+
 const MarketIntelligenceAgent = require('./research/marketIntelligence');
 const CompetitorAnalysisAgent = require('./research/competitorAnalysis');
 const ReviewAnalysisAgent = require('./research/reviewAnalysis');
@@ -12,12 +14,10 @@ const QAAgent = require('./testing/qaAgent');
 class MasterOrchestrator {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new Anthropic({
-      apiKey: tier === 'premium' 
-        ? process.env.ANTHROPIC_API_KEY 
-        : process.env.ANTHROPIC_API_KEY_FREE
-    });
-    this.model = 'claude-sonnet-4-5-20250929';
+    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+
+    this.model = 'deepseek/deepseek-chat';
+
     this.researchData = {};
     this.competitiveAdvantages = [];
   }

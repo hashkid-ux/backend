@@ -1,16 +1,16 @@
-const Anthropic = require('@anthropic-ai/sdk');
+//const Anthropic = require('@anthropic-ai/sdk');
+const AIClient = require('../services/aiClient');
+
 
 class StrategyAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new Anthropic({
-      apiKey: tier === 'premium' 
-        ? process.env.ANTHROPIC_API_KEY 
-        : process.env.ANTHROPIC_API_KEY_FREE
-    });
+    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+
     
     // Model selection based on tier
-    this.model = tier === 'premium' ? 'claude-sonnet-4-5-20250929' : 'claude-haiku-4-20250924';
+    this.model = 'deepseek/deepseek-chat';
+
   }
 
   async validateIdea(ideaDescription, targetMarket, budget) {

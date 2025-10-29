@@ -6,10 +6,7 @@ require('dotenv').config();
 const requiredEnvVars = [
   'ANTHROPIC_API_KEY',
   'JWT_SECRET',
-  'GOOGLE_CLIENT_ID',
-  'GOOGLE_CLIENT_SECRET',
-  'GITHUB_CLIENT_ID',
-  'GITHUB_CLIENT_SECRET'
+  'DATABASE_URL'
 ];
 
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
@@ -21,10 +18,20 @@ if (missingVars.length > 0) {
   console.error('   1. Go to your Railway project');
   console.error('   2. Click "Variables" tab');
   console.error('   3. Add the missing variables');
-  console.error('\n📖 OAuth Setup Guide:');
-  console.error('   Google: https://console.cloud.google.com/apis/credentials');
-  console.error('   GitHub: https://github.com/settings/developers');
   process.exit(1);
+}
+
+// OAuth warnings (not required but recommended)
+if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  console.warn('⚠️  Google OAuth not configured (optional)');
+}
+if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
+  console.warn('⚠️  GitHub OAuth not configured (optional)');
+}
+
+// Email warnings
+if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+  console.warn('⚠️  Email service not configured - emails will be logged only');
 }
 
 module.exports = {
@@ -47,11 +54,19 @@ module.exports = {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)
     },
     github: {
       clientId: process.env.GITHUB_CLIENT_ID,
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
+      enabled: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET)
     }
+  },
+
+  email: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+    enabled: !!(process.env.EMAIL_USER && process.env.EMAIL_PASS)
   },
   
   payment: {
@@ -70,6 +85,7 @@ module.exports = {
       'http://localhost:5000',
       'https://anythingai.vercel.app',
       process.env.CORS_ORIGIN,
+      process.env.FRONTEND_URL
     ].filter(Boolean),
   },
   

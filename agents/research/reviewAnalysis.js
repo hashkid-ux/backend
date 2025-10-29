@@ -1,16 +1,16 @@
-const Anthropic = require('@anthropic-ai/sdk');
+//const Anthropic = require('@anthropic-ai/sdk');
+const AIClient = require('../../services/aiClient');
+
 const Sentiment = require('sentiment');
 const WebScraper = require('./webScraper');
 
 class ReviewAnalysisAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new Anthropic({
-      apiKey: tier === 'premium' 
-        ? process.env.ANTHROPIC_API_KEY 
-        : process.env.ANTHROPIC_API_KEY_FREE
-    });
-    this.model = 'claude-haiku-4-20250924'; // Fast & cheap for review analysis
+    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+
+    this.model = 'deepseek/deepseek-chat';
+
     this.sentiment = new Sentiment();
     this.scraper = new WebScraper();
   }

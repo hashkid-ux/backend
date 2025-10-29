@@ -1,15 +1,13 @@
-const Anthropic = require('@anthropic-ai/sdk');
+//const Anthropic = require('@anthropic-ai/sdk');
+const AIClient = require('../../services/aiClient');
+
 const { chromium } = require('playwright-core');
 
 class QAAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new Anthropic({
-      apiKey: tier === 'premium' 
-        ? process.env.ANTHROPIC_API_KEY 
-        : process.env.ANTHROPIC_API_KEY_FREE
-    });
-    this.model = 'claude-sonnet-4-5-20250929';
+    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.model = 'deepseek/deepseek-chat';
     this.browser = null;
   }
 
