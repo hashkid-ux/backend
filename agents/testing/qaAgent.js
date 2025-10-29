@@ -1,242 +1,233 @@
-//const Anthropic = require('@anthropic-ai/sdk');
-const AIClient = require('../../services/aiClient');
+// backend/agents/testing/qaAgent.js
+// PRODUCTION-READY QA Agent with Comprehensive Validation
 
-const { chromium } = require('playwright-core');
+const AIClient = require('../../services/aiClient');
 
 class QAAgent {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat';
-    this.browser = null;
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 
   async testGeneratedCode(codeFiles, projectData) {
-    console.log('🧪 QA Agent starting tests...');
+    console.log('🧪 QA Agent: Running comprehensive tests...');
 
-    try {
-      const results = {
-        code_quality: await this.testCodeQuality(codeFiles),
-        functionality: await this.testFunctionality(codeFiles, projectData),
-        security: await this.testSecurity(codeFiles),
-        performance: await this.testPerformance(codeFiles),
-        accessibility: await this.testAccessibility(codeFiles),
-        overall_score: 0,
-        issues: [],
-        recommendations: []
-      };
+    const results = {
+      syntax: await this.testSyntax(codeFiles),
+      security: await this.testSecurity(codeFiles),
+      performance: await this.testPerformance(codeFiles),
+      bestPractices: await this.testBestPractices(codeFiles),
+      functionality: await this.testFunctionality(codeFiles),
+      overall_score: 0,
+      issues: [],
+      recommendations: []
+    };
 
-      // Calculate overall score
-      results.overall_score = this.calculateOverallScore(results);
+    // Calculate overall score
+    results.overall_score = this.calculateOverallScore(results);
+    
+    // Generate recommendations
+    results.recommendations = this.generateRecommendations(results);
 
-      // Generate recommendations
-      results.recommendations = await this.generateRecommendations(results);
+    // Critical issues that must be fixed
+    results.critical_issues = this.identifyCriticalIssues(results);
 
-      return results;
-
-    } catch (error) {
-      console.error('❌ QA testing error:', error);
-      throw error;
+    console.log(`✅ QA Complete: Score ${results.overall_score}/100`);
+    if (results.critical_issues.length > 0) {
+      console.warn(`⚠️  ${results.critical_issues.length} critical issues found`);
     }
+
+    return results;
   }
 
-  async testCodeQuality(codeFiles) {
-    console.log('📝 Testing code quality...');
-
+  async testSyntax(codeFiles) {
+    console.log('   🔍 Testing syntax...');
+    
     const issues = [];
-    let totalScore = 100;
+    let score = 100;
 
     for (const [filename, code] of Object.entries(codeFiles)) {
-      // Skip non-JS files
+      // Only check JS/JSX files
       if (!filename.endsWith('.js') && !filename.endsWith('.jsx')) continue;
 
-      // Basic quality checks
-      const qualityIssues = this.analyzeCode(code, filename);
-      issues.push(...qualityIssues);
+      // 1. Check balanced brackets
+      const brackets = [
+        ['{', '}', 'braces'],
+        ['(', ')', 'parentheses'],
+        ['[', ']', 'brackets']
+      ];
 
-      // Deduct points for issues
-      totalScore -= qualityIssues.length * 2;
+      for (const [open, close, name] of brackets) {
+        if (!this.isBalanced(code, open, close)) {
+          issues.push({
+            file: filename,
+            severity: 'critical',
+            type: 'syntax',
+            message: `Unbalanced ${name}`
+          });
+          score -= 20;
+        }
+      }
+
+      // 2. Check for common syntax errors
+      const syntaxErrors = [
+        { pattern: /\}\s*;?\s*\{/, message: 'Missing code between closing and opening braces' },
+        { pattern: /function\s*\(\s*\)\s*\{?\s*\}/, message: 'Empty function' },
+        { pattern: /if\s*\(\s*\)\s*\{/, message: 'Empty if condition' },
+        { pattern: /\)\s*\{[^}]*\}\s*\(/, message: 'Invalid syntax near function' }
+      ];
+
+      for (const { pattern, message } of syntaxErrors) {
+        if (pattern.test(code)) {
+          issues.push({
+            file: filename,
+            severity: 'high',
+            type: 'syntax',
+            message
+          });
+          score -= 10;
+        }
+      }
+
+      // 3. Check for incomplete implementations
+      const incomplete = [
+        /\/\/\s*TODO/gi,
+        /\/\/\s*FIXME/gi,
+        /\/\*\s*TODO/gi,
+        /placeholder/gi,
+        /coming soon/gi
+      ];
+
+      for (const pattern of incomplete) {
+        if (pattern.test(code)) {
+          issues.push({
+            file: filename,
+            severity: 'medium',
+            type: 'incomplete',
+            message: 'Contains TODO/placeholder code'
+          });
+          score -= 5;
+        }
+      }
+
+      // 4. Check for proper imports/exports
+      if (filename.includes('components/') || filename.includes('pages/')) {
+        if (!code.includes('export ')) {
+          issues.push({
+            file: filename,
+            severity: 'high',
+            type: 'syntax',
+            message: 'Missing export statement'
+          });
+          score -= 10;
+        }
+      }
     }
 
     return {
-      score: Math.max(0, totalScore),
+      score: Math.max(0, score),
       issues,
-      files_tested: Object.keys(codeFiles).length
+      passed: issues.length === 0
     };
   }
 
-  analyzeCode(code, filename) {
-    const issues = [];
-
-    // Check for console.logs (should be removed in production)
-    const consoleCount = (code.match(/console\.(log|error|warn)/g) || []).length;
-    if (consoleCount > 5) {
-      issues.push({
-        file: filename,
-        severity: 'low',
-        message: `Too many console statements (${consoleCount})`,
-        line: null
-      });
-    }
-
-    // Check for TODO comments
-    const todoCount = (code.match(/\/\/\s*TODO/gi) || []).length;
-    if (todoCount > 0) {
-      issues.push({
-        file: filename,
-        severity: 'medium',
-        message: `${todoCount} TODO comments need attention`,
-        line: null
-      });
-    }
-
-    // Check for hardcoded credentials
-    const credentialPatterns = [
-      /password\s*=\s*["'][^"']+["']/i,
-      /api[_-]?key\s*=\s*["'][^"']+["']/i,
-      /secret\s*=\s*["'][^"']+["']/i
-    ];
-
-    credentialPatterns.forEach(pattern => {
-      if (pattern.test(code)) {
-        issues.push({
-          file: filename,
-          severity: 'critical',
-          message: 'Potential hardcoded credentials detected',
-          line: null
-        });
-      }
-    });
-
-    // Check for missing error handling
-    const asyncFunctions = (code.match(/async\s+\w+/g) || []).length;
-    const tryCatchBlocks = (code.match(/try\s*\{/g) || []).length;
-    if (asyncFunctions > tryCatchBlocks + 2) {
-      issues.push({
-        file: filename,
-        severity: 'medium',
-        message: 'Some async functions lack try-catch blocks',
-        line: null
-      });
-    }
-
-    // Check for proper imports
-    if (code.includes('require(') && code.includes('import ')) {
-      issues.push({
-        file: filename,
-        severity: 'low',
-        message: 'Mixed CommonJS and ES6 imports',
-        line: null
-      });
-    }
-
-    return issues;
-  }
-
-  async testFunctionality(codeFiles, projectData) {
-    console.log('⚙️  Testing functionality...');
-
-    // Use AI to analyze if code implements required features
-    const prompt = `Analyze if this code implements all required features:
-
-PROJECT REQUIREMENTS:
-${JSON.stringify(projectData, null, 2)}
-
-CODE FILES:
-${Object.entries(codeFiles).slice(0, 10).map(([name, code]) => 
-  `FILE: ${name}\n${code.substring(0, 1000)}`
-).join('\n\n---\n\n')}
-
-Analyze in JSON format:
-{
-  "implemented_features": ["feature1", "feature2"],
-  "missing_features": ["feature3"],
-  "partial_features": [
-    {"feature": "feature4", "completion": 70, "missing": "description"}
-  ],
-  "score": 0-100
-}`;
-
-    try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 3000,
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      const content = response.content[0].text;
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-
-      return { score: 85, implemented_features: [], missing_features: [] };
-
-    } catch (error) {
-      console.error('⚠️  Functionality test error:', error);
-      return { score: 80, error: 'Analysis incomplete' };
-    }
-  }
-
   async testSecurity(codeFiles) {
-    console.log('🔒 Testing security...');
-
+    console.log('   🔒 Testing security...');
+    
     const vulnerabilities = [];
     let score = 100;
 
     for (const [filename, code] of Object.entries(codeFiles)) {
-      // Check for SQL injection risks
-      if (code.includes('`SELECT') || code.includes('`INSERT')) {
+      // 1. SQL Injection risks
+      if (code.includes('`SELECT ') || code.includes('`INSERT ') || code.includes('`UPDATE ')) {
         vulnerabilities.push({
           file: filename,
           severity: 'critical',
           type: 'sql_injection',
-          message: 'Potential SQL injection vulnerability (string interpolation in queries)'
+          message: 'Potential SQL injection using string interpolation',
+          fix: 'Use parameterized queries or Prisma ORM'
         });
-        score -= 15;
+        score -= 20;
       }
 
-      // Check for XSS risks
+      // 2. XSS risks
       if (code.includes('innerHTML') || code.includes('dangerouslySetInnerHTML')) {
         vulnerabilities.push({
           file: filename,
           severity: 'high',
           type: 'xss',
-          message: 'Potential XSS vulnerability (direct HTML injection)'
+          message: 'Potential XSS vulnerability with HTML injection',
+          fix: 'Sanitize user input or use textContent'
         });
-        score -= 10;
+        score -= 15;
       }
 
-      // Check for missing input validation
-      if (filename.includes('controller') && !code.includes('validate')) {
-        vulnerabilities.push({
-          file: filename,
-          severity: 'medium',
-          type: 'input_validation',
-          message: 'Missing input validation in controller'
-        });
-        score -= 5;
+      // 3. Hardcoded secrets
+      const secretPatterns = [
+        { pattern: /password\s*[:=]\s*["'][^"']{3,}["']/, name: 'password' },
+        { pattern: /api[_-]?key\s*[:=]\s*["'][^"']{10,}["']/i, name: 'API key' },
+        { pattern: /secret\s*[:=]\s*["'][^"']{10,}["']/i, name: 'secret' },
+        { pattern: /token\s*[:=]\s*["'][^"']{20,}["']/i, name: 'token' }
+      ];
+
+      for (const { pattern, name } of secretPatterns) {
+        if (pattern.test(code)) {
+          vulnerabilities.push({
+            file: filename,
+            severity: 'critical',
+            type: 'hardcoded_secret',
+            message: `Hardcoded ${name} detected`,
+            fix: 'Use environment variables'
+          });
+          score -= 25;
+        }
       }
 
-      // Check for weak authentication
+      // 4. Weak JWT/Auth
       if (code.includes('jwt.sign') && !code.includes('expiresIn')) {
         vulnerabilities.push({
           file: filename,
           severity: 'medium',
           type: 'auth',
-          message: 'JWT tokens without expiration'
+          message: 'JWT without expiration time',
+          fix: 'Add expiresIn option to jwt.sign()'
         });
-        score -= 5;
+        score -= 10;
       }
 
-      // Check for CORS misconfiguration
+      // 5. CORS misconfiguration
       if (code.includes("cors({ origin: '*'")) {
         vulnerabilities.push({
           file: filename,
           severity: 'medium',
           type: 'cors',
-          message: 'CORS allows all origins (security risk)'
+          message: 'CORS allows all origins (security risk)',
+          fix: 'Specify allowed origins explicitly'
+        });
+        score -= 10;
+      }
+
+      // 6. Missing input validation
+      if (filename.includes('controller') && !code.includes('validate') && !code.includes('validation')) {
+        vulnerabilities.push({
+          file: filename,
+          severity: 'medium',
+          type: 'validation',
+          message: 'No input validation detected',
+          fix: 'Add validation middleware'
+        });
+        score -= 8;
+      }
+
+      // 7. No rate limiting
+      if (filename === 'server.js' && !code.includes('rateLimit')) {
+        vulnerabilities.push({
+          file: filename,
+          severity: 'low',
+          type: 'rate_limiting',
+          message: 'No rate limiting configured',
+          fix: 'Add express-rate-limit'
         });
         score -= 5;
       }
@@ -245,121 +236,163 @@ Analyze in JSON format:
     return {
       score: Math.max(0, score),
       vulnerabilities,
-      total_issues: vulnerabilities.length
+      passed: score >= 80,
+      critical_count: vulnerabilities.filter(v => v.severity === 'critical').length
     };
   }
 
   async testPerformance(codeFiles) {
-    console.log('⚡ Testing performance...');
-
+    console.log('   ⚡ Testing performance...');
+    
     const issues = [];
     let score = 100;
 
     for (const [filename, code] of Object.entries(codeFiles)) {
-      // Check for N+1 queries
-      const loopCount = (code.match(/for\s*\(/g) || []).length;
-      const queryCount = (code.match(/\.find\(|\.findOne\(|\.query\(/g) || []).length;
+      // 1. N+1 query problem
+      const hasLoops = /for\s*\(/.test(code) || /forEach/.test(code);
+      const hasQueries = /\.find\(|\.findOne\(|\.query\(/.test(code);
       
-      if (loopCount > 0 && queryCount > loopCount) {
+      if (hasLoops && hasQueries) {
         issues.push({
           file: filename,
           severity: 'high',
-          message: 'Potential N+1 query problem'
+          type: 'n_plus_one',
+          message: 'Potential N+1 query problem',
+          fix: 'Use batch queries or eager loading'
         });
         score -= 15;
       }
 
-      // Check for missing pagination
-      if (filename.includes('controller') && code.includes('findAll') && !code.includes('limit')) {
+      // 2. Missing pagination
+      if (filename.includes('controller') && /findAll|find\(\)/.test(code) && !/limit|take/.test(code)) {
         issues.push({
           file: filename,
           severity: 'medium',
-          message: 'Missing pagination on list endpoint'
+          type: 'pagination',
+          message: 'Missing pagination on list endpoint',
+          fix: 'Add limit and offset parameters'
         });
         score -= 10;
       }
 
-      // Check for missing indexes (database files)
-      if (filename.includes('model') && code.includes('unique: true') && !code.includes('index')) {
+      // 3. Synchronous operations
+      if (/readFileSync|writeFileSync|execSync/.test(code)) {
+        issues.push({
+          file: filename,
+          severity: 'high',
+          type: 'sync_operation',
+          message: 'Blocking synchronous operation',
+          fix: 'Use async versions'
+        });
+        score -= 12;
+      }
+
+      // 4. Missing indexes (database schema)
+      if (filename.includes('schema') && /model\s+\w+/.test(code)) {
+        if (!/@@index/.test(code)) {
+          issues.push({
+            file: filename,
+            severity: 'medium',
+            type: 'missing_index',
+            message: 'No database indexes defined',
+            fix: 'Add @@index for frequently queried fields'
+          });
+          score -= 8;
+        }
+      }
+
+      // 5. Large inline data
+      if (code.length > 50000) {
         issues.push({
           file: filename,
           severity: 'low',
-          message: 'Consider adding database indexes'
+          type: 'large_file',
+          message: 'Very large file may impact performance',
+          fix: 'Consider splitting into smaller modules'
         });
         score -= 5;
-      }
-
-      // Check for synchronous file operations
-      if (code.includes('readFileSync') || code.includes('writeFileSync')) {
-        issues.push({
-          file: filename,
-          severity: 'medium',
-          message: 'Using synchronous file operations (blocks event loop)'
-        });
-        score -= 10;
       }
     }
 
     return {
       score: Math.max(0, score),
       issues,
-      recommendations: [
-        'Add database indexes for frequently queried fields',
-        'Implement caching for expensive operations',
-        'Use pagination for list endpoints'
-      ]
+      passed: score >= 70
     };
   }
 
-  async testAccessibility(codeFiles) {
-    console.log('♿ Testing accessibility...');
-
+  async testBestPractices(codeFiles) {
+    console.log('   ✨ Testing best practices...');
+    
     const issues = [];
     let score = 100;
 
     for (const [filename, code] of Object.entries(codeFiles)) {
-      // Only check frontend files
-      if (!filename.includes('component') && !filename.includes('page')) continue;
+      // 1. Error handling
+      if (filename.endsWith('.js') || filename.endsWith('.jsx')) {
+        const hasAsync = /async\s+function|async\s+\(/.test(code);
+        const hasTryCatch = /try\s*\{[\s\S]*catch/.test(code);
+        
+        if (hasAsync && !hasTryCatch) {
+          issues.push({
+            file: filename,
+            severity: 'medium',
+            type: 'error_handling',
+            message: 'Async function without try-catch',
+            fix: 'Add error handling'
+          });
+          score -= 8;
+        }
+      }
 
-      // Check for missing alt text on images
-      const imgCount = (code.match(/<img/g) || []).length;
-      const altCount = (code.match(/alt=/g) || []).length;
-      if (imgCount > altCount) {
+      // 2. Console.log in production
+      const consoleCount = (code.match(/console\.(log|warn|error)/g) || []).length;
+      if (consoleCount > 10) {
         issues.push({
           file: filename,
-          severity: 'medium',
-          message: `${imgCount - altCount} images missing alt text`
+          severity: 'low',
+          type: 'console_logs',
+          message: `Too many console statements (${consoleCount})`,
+          fix: 'Use proper logging library'
         });
         score -= 5;
       }
 
-      // Check for missing ARIA labels on buttons
-      if (code.includes('<button') && !code.includes('aria-label')) {
+      // 3. Proper naming conventions
+      if (/var\s+/.test(code)) {
         issues.push({
           file: filename,
           severity: 'low',
-          message: 'Consider adding aria-label to buttons'
+          type: 'naming',
+          message: 'Using var instead of const/let',
+          fix: 'Use const or let'
         });
         score -= 3;
       }
 
-      // Check for proper heading hierarchy
-      const h1Count = (code.match(/<h1/g) || []).length;
-      if (h1Count > 1) {
-        issues.push({
-          file: filename,
-          severity: 'low',
-          message: 'Multiple h1 tags (should be one per page)'
-        });
-        score -= 3;
-      }
-
-      // Check for keyboard navigation
-      if (code.includes('onClick') && !code.includes('onKeyPress') && !code.includes('onKeyDown')) {
+      // 4. React class components (should be functional)
+      if ((filename.endsWith('.jsx') || filename.endsWith('.js')) && 
+          /class\s+\w+\s+extends\s+(React\.)?Component/.test(code)) {
         issues.push({
           file: filename,
           severity: 'medium',
-          message: 'Missing keyboard event handlers for clickable elements'
+          type: 'outdated_pattern',
+          message: 'Using class components (should use functional)',
+          fix: 'Refactor to functional component with hooks'
+        });
+        score -= 10;
+      }
+
+      // 5. PropTypes or TypeScript
+      if (filename.includes('components/') && 
+          !code.includes('PropTypes') && 
+          !filename.endsWith('.tsx')) {
+        issues.push({
+          file: filename,
+          severity: 'low',
+          type: 'prop_validation',
+          message: 'No PropTypes validation',
+          fix: 'Add PropTypes or use TypeScript'
         });
         score -= 5;
       }
@@ -368,73 +401,161 @@ Analyze in JSON format:
     return {
       score: Math.max(0, score),
       issues,
-      wcag_compliance: score >= 80 ? 'AA' : 'Partial'
+      passed: score >= 70
     };
+  }
+
+  async testFunctionality(codeFiles) {
+    console.log('   ⚙️  Testing functionality...');
+    
+    const checks = {
+      hasServer: false,
+      hasRoutes: false,
+      hasAuth: false,
+      hasDatabase: false,
+      hasReactApp: false,
+      hasRouting: false
+    };
+
+    let score = 0;
+
+    // Check backend
+    if (codeFiles['server.js']) {
+      const serverCode = codeFiles['server.js'];
+      if (serverCode.includes('express()') && serverCode.includes('app.listen')) {
+        checks.hasServer = true;
+        score += 20;
+      }
+    }
+
+    // Check routes
+    const routeFiles = Object.keys(codeFiles).filter(f => f.includes('routes/'));
+    if (routeFiles.length > 0) {
+      checks.hasRoutes = true;
+      score += 15;
+    }
+
+    // Check auth
+    const hasAuthFile = Object.keys(codeFiles).some(f => f.includes('auth'));
+    if (hasAuthFile) {
+      checks.hasAuth = true;
+      score += 15;
+    }
+
+    // Check database
+    const hasDbFile = Object.keys(codeFiles).some(f => 
+      f.includes('prisma') || f.includes('database') || f.includes('schema')
+    );
+    if (hasDbFile) {
+      checks.hasDatabase = true;
+      score += 15;
+    }
+
+    // Check React app
+    if (codeFiles['src/App.js'] || codeFiles['src/App.jsx']) {
+      const appCode = codeFiles['src/App.js'] || codeFiles['src/App.jsx'];
+      if (appCode.includes('React') || appCode.includes('export')) {
+        checks.hasReactApp = true;
+        score += 20;
+      }
+    }
+
+    // Check routing
+    const hasRouting = Object.values(codeFiles).some(code => 
+      code.includes('BrowserRouter') || code.includes('Routes') || code.includes('Route')
+    );
+    if (hasRouting) {
+      checks.hasRouting = true;
+      score += 15;
+    }
+
+    return {
+      score: Math.min(100, score),
+      checks,
+      passed: score >= 70
+    };
+  }
+
+  // Helper methods
+  isBalanced(code, open, close) {
+    let count = 0;
+    for (const char of code) {
+      if (char === open) count++;
+      if (char === close) count--;
+      if (count < 0) return false;
+    }
+    return count === 0;
   }
 
   calculateOverallScore(results) {
     const weights = {
-      code_quality: 0.25,
-      functionality: 0.30,
-      security: 0.25,
-      performance: 0.15,
-      accessibility: 0.05
+      syntax: 0.25,
+      security: 0.30,
+      performance: 0.20,
+      bestPractices: 0.15,
+      functionality: 0.10
     };
 
     let totalScore = 0;
-    totalScore += (results.code_quality?.score || 0) * weights.code_quality;
-    totalScore += (results.functionality?.score || 0) * weights.functionality;
+    totalScore += (results.syntax?.score || 0) * weights.syntax;
     totalScore += (results.security?.score || 0) * weights.security;
     totalScore += (results.performance?.score || 0) * weights.performance;
-    totalScore += (results.accessibility?.score || 0) * weights.accessibility;
+    totalScore += (results.bestPractices?.score || 0) * weights.bestPractices;
+    totalScore += (results.functionality?.score || 0) * weights.functionality;
 
     return Math.round(totalScore);
   }
 
-  async generateRecommendations(results) {
+  identifyCriticalIssues(results) {
+    const critical = [];
+
+    // Security critical issues
+    if (results.security?.vulnerabilities) {
+      const criticalVulns = results.security.vulnerabilities.filter(v => v.severity === 'critical');
+      critical.push(...criticalVulns.map(v => v.message));
+    }
+
+    // Syntax critical issues
+    if (results.syntax?.issues) {
+      const criticalSyntax = results.syntax.issues.filter(i => i.severity === 'critical');
+      critical.push(...criticalSyntax.map(i => i.message));
+    }
+
+    return critical;
+  }
+
+  generateRecommendations(results) {
     const recommendations = [];
 
-    // Code quality recommendations
-    if (results.code_quality?.score < 80) {
+    // Based on scores
+    if (results.security?.score < 70) {
       recommendations.push({
-        priority: 'high',
-        category: 'code_quality',
-        message: 'Address code quality issues before deployment',
-        actions: ['Remove console.logs', 'Complete TODO items', 'Add error handling']
+        priority: 'critical',
+        category: 'security',
+        message: 'Address security vulnerabilities before deployment',
+        actions: results.security.vulnerabilities.map(v => v.fix)
       });
     }
 
-    // Security recommendations
-    if (results.security?.vulnerabilities?.length > 0) {
-      const critical = results.security.vulnerabilities.filter(v => v.severity === 'critical');
-      if (critical.length > 0) {
-        recommendations.push({
-          priority: 'critical',
-          category: 'security',
-          message: `${critical.length} critical security issues must be fixed`,
-          actions: critical.map(v => v.message)
-        });
-      }
-    }
-
-    // Performance recommendations
     if (results.performance?.score < 70) {
       recommendations.push({
-        priority: 'medium',
+        priority: 'high',
         category: 'performance',
-        message: 'Performance optimization needed',
-        actions: results.performance.recommendations || []
+        message: 'Optimize performance issues',
+        actions: results.performance.issues.map(i => i.fix)
+      });
+    }
+
+    if (results.syntax?.issues?.length > 0) {
+      recommendations.push({
+        priority: 'high',
+        category: 'syntax',
+        message: 'Fix syntax errors',
+        actions: results.syntax.issues.map(i => i.message)
       });
     }
 
     return recommendations;
-  }
-
-  async closeBrowser() {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-    }
   }
 }
 

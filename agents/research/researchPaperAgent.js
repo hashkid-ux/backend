@@ -9,7 +9,7 @@ class ResearchPaperAgent {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
 
-    this.model = 'deepseek/deepseek-chat';
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
 
     this.scraper = new WebScraper();
   }

@@ -4,7 +4,7 @@ class AIClient {
   constructor(apiKey = process.env.OPENROUTER_API_KEY) {
     this.apiKey = apiKey;
     this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'deepseek/deepseek-chat'; // Free model
+    this.model = 'deepseek/deepseek-chat-v3.1:free'; // Free model
   }
 
   // Main method - matches Anthropic SDK naming

@@ -1,384 +1,347 @@
-//const Anthropic = require('@anthropic-ai/sdk');
+// backend/agents/codegen/frontendAgent.js
+// PRODUCTION-READY Frontend Agent with Self-Correction
+
 const AIClient = require('../../services/aiClient');
-const CodeFormatter = require('./utils/codeFormatter');
-const FileGenerator = require('./utils/fileGenerator');
 
 class FrontendAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    // Replace Anthropic client with OpenRouter
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat'; // DeepSeek v3
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.maxRetries = 3;
   }
 
   async generateApp(projectData) {
-    console.log('⚛️  Frontend Agent starting code generation...');
+    console.log('⚛️  Frontend Agent: Starting React app generation...');
 
-    const {
-      projectName,
-      description,
-      features,
-      designSystem,
-      targetPlatform, // 'web', 'mobile', 'both'
-      framework, // 'react', 'nextjs', 'react-native'
-    } = projectData;
+    let attempt = 0;
+    let lastError = null;
 
-    try {
-      const fileGen = new FileGenerator(projectName);
+    while (attempt < this.maxRetries) {
+      try {
+        attempt++;
+        console.log(`   Attempt ${attempt}/${this.maxRetries}`);
 
-      // Step 1: Generate component architecture
-      const architecture = await this.designArchitecture(projectData);
+        // Generate entire frontend in ONE call
+        const files = await this.generateAllFrontendFiles(projectData);
+        
+        // Validate generated code
+        const validation = await this.validateReactCode(files);
+        
+        if (validation.isValid) {
+          console.log('✅ Frontend code generated and validated');
+          return {
+            files,
+            stats: this.calculateStats(files),
+            validation
+          };
+        }
 
-      // Step 2: Generate main components
-      const components = await this.generateComponents(architecture, designSystem);
+        // Auto-fix validation errors
+        console.log(`⚠️  Validation failed: ${validation.errors.join(', ')}`);
+        console.log('🔧 Auto-fixing React issues...');
+        
+        const fixedFiles = await this.autoFixReactCode(files, validation.errors);
+        const revalidation = await this.validateReactCode(fixedFiles);
+        
+        if (revalidation.isValid) {
+          console.log('✅ React issues fixed automatically');
+          return {
+            files: fixedFiles,
+            stats: this.calculateStats(fixedFiles),
+            validation: revalidation,
+            wasFixed: true
+          };
+        }
 
-      // Step 3: Generate pages/screens
-      const pages = await this.generatePages(architecture, components);
+        lastError = validation.errors;
 
-      // Step 4: Generate services (API calls)
-      const services = await this.generateServices(features);
-
-      // Step 5: Generate utils
-      const utils = await this.generateUtils();
-
-      // Step 6: Assemble all files
-      const allFiles = {
-        ...this.generateBoilerplate(projectName, framework),
-        ...components,
-        ...pages,
-        ...services,
-        ...utils,
-      };
-
-      // Format all code
-      const formattedFiles = await CodeFormatter.formatMultipleFiles(allFiles);
-
-      // Add to file generator
-      Object.entries(formattedFiles).forEach(([path, content]) => {
-        fileGen.addFile(path, content, 'frontend');
-      });
-
-      return {
-        files: formattedFiles,
-        architecture,
-        stats: fileGen.getStats(),
-        download_url: `/download/${projectName}`,
-      };
-
-    } catch (error) {
-      console.error('❌ Frontend generation error:', error);
-      throw error;
+      } catch (error) {
+        console.error(`❌ Attempt ${attempt} failed:`, error.message);
+        lastError = error;
+        
+        if (attempt < this.maxRetries) {
+          console.log('🔄 Retrying with clearer instructions...');
+          await this.sleep(2000);
+        }
+      }
     }
+
+    throw new Error(`Frontend generation failed after ${this.maxRetries} attempts: ${lastError}`);
   }
 
-  async designArchitecture(projectData) {
-    console.log('🏗️  Designing app architecture...');
+  async generateAllFrontendFiles(projectData) {
+    const { projectName, description, features, framework = 'react' } = projectData;
 
-    const prompt = `Design a React application architecture for this project:
+    const prompt = `Generate a complete, production-ready React application with ALL necessary files. Return as VALID JSON only.
 
-PROJECT: ${projectData.projectName}
-DESCRIPTION: ${projectData.description}
-FEATURES: ${JSON.stringify(projectData.features, null, 2)}
-PLATFORM: ${projectData.targetPlatform}
+PROJECT: ${projectName}
+DESCRIPTION: ${description}
+FEATURES: ${JSON.stringify(features)}
+FRAMEWORK: ${framework}
 
-Create an architecture in JSON format:
+Generate this EXACT JSON structure:
 {
-  "components": [
-    {
-      "name": "ComponentName",
-      "purpose": "What it does",
-      "props": ["prop1", "prop2"],
-      "state": ["state1", "state2"],
-      "api_calls": ["GET /api/users"]
-    }
-  ],
-  "pages": [
-    {
-      "name": "HomePage",
-      "route": "/",
-      "components_used": ["Header", "Hero", "Footer"],
-      "features": ["feature1"]
-    }
-  ],
-  "routing": [
-    {"path": "/", "component": "HomePage"},
-    {"path": "/dashboard", "component": "DashboardPage"}
-  ],
-  "state_management": "context/redux/zustand",
-  "api_endpoints": [
-    {"method": "GET", "path": "/api/users", "purpose": "Fetch users"}
-  ]
+  "public/index.html": "HTML with proper meta tags",
+  "src/index.js": "React 18 entry point with createRoot",
+  "src/App.js": "Main App component with routing",
+  "src/index.css": "Tailwind CSS imports",
+  "src/pages/HomePage.jsx": "Home page component",
+  "src/pages/DashboardPage.jsx": "Dashboard component",
+  "src/components/Navbar.jsx": "Navigation component",
+  "src/components/Footer.jsx": "Footer component",
+  "src/services/api.js": "Axios API client",
+  "src/utils/auth.js": "Auth utilities",
+  "src/contexts/AuthContext.js": "Auth context provider",
+  "package.json": "Complete dependencies",
+  "tailwind.config.js": "Tailwind configuration",
+  "README.md": "Setup instructions"
 }
 
-Be specific and production-ready.`;
+CRITICAL REQUIREMENTS:
+1. ✅ Use React 18 syntax (createRoot, not render)
+2. ✅ Functional components with hooks ONLY
+3. ✅ React Router v6 for routing
+4. ✅ Tailwind CSS for styling (utility classes ONLY)
+5. ✅ Axios for API calls with interceptors
+6. ✅ Context API for state management
+7. ✅ Proper error boundaries
+8. ✅ Loading states for async operations
+9. ✅ Responsive design (mobile-first)
+10. ✅ NO class components
+11. ✅ NO inline styles (Tailwind only)
+12. ✅ NO placeholder comments - working code only
+13. ✅ Proper PropTypes or TypeScript types
 
-    try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 8000,
-        messages: [{ role: 'user', content: prompt }]
-      });
+APP.JS must include:
+- BrowserRouter setup
+- Route definitions
+- AuthContext provider
+- Error boundary
+- Navigation component
 
-      const content = response.content[0].text;
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
+API SERVICE must include:
+- Axios instance with baseURL
+- Request interceptor for auth tokens
+- Response interceptor for error handling
+- Automatic token refresh logic
 
-      throw new Error('Failed to parse architecture');
-
-    } catch (error) {
-      console.error('❌ Architecture error:', error);
-      throw error;
-    }
-  }
-
-  async generateComponents(architecture, designSystem) {
-    console.log('🎨 Generating React components...');
-
-    const components = {};
-
-    // Generate each component
-    for (const comp of architecture.components.slice(0, this.tier === 'free' ? 5 : 15)) {
-      const code = await this.generateSingleComponent(comp, designSystem);
-      components[`src/components/${comp.name}.jsx`] = code;
-    }
-
-    return components;
-  }
-
-  async generateSingleComponent(compSpec, designSystem) {
-    const prompt = `Generate a production-ready React component:
-
-COMPONENT SPEC:
-${JSON.stringify(compSpec, null, 2)}
-
-DESIGN SYSTEM:
-${JSON.stringify(designSystem, null, 2)}
-
-Requirements:
-- Use functional components with hooks
-- Include PropTypes
-- Add error handling
-- Use Tailwind CSS classes
-- Include loading states
-- Add comments
-- Make it accessible (ARIA labels)
-- Handle edge cases
-
-Generate ONLY the component code, no explanations.`;
-
-    try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      let code = response.content[0].text;
-      
-      // Extract code from markdown if present
-      const codeMatch = code.match(/```(?:jsx?|javascript|typescript)?\n([\s\S]*?)```/);
-      if (codeMatch) {
-        code = codeMatch[1];
-      }
-
-      return code.trim();
-
-    } catch (error) {
-      console.error(`❌ Component generation error for ${compSpec.name}:`, error);
-      return this.generateFallbackComponent(compSpec.name);
-    }
-  }
-
-  async generatePages(architecture, components) {
-    console.log('📄 Generating pages...');
-
-    const pages = {};
-
-    for (const page of architecture.pages.slice(0, this.tier === 'free' ? 3 : 10)) {
-      const code = await this.generateSinglePage(page, architecture, components);
-      pages[`src/pages/${page.name}.jsx`] = code;
-    }
-
-    return pages;
-  }
-
-  async generateSinglePage(pageSpec, architecture, components) {
-    const prompt = `Generate a React page component:
-
-PAGE SPEC:
-${JSON.stringify(pageSpec, null, 2)}
-
-AVAILABLE COMPONENTS:
-${Object.keys(components).join(', ')}
-
-Requirements:
-- Import and use the specified components
-- Add routing if needed (react-router-dom)
-- Include SEO meta tags
-- Add page-specific logic
-- Handle authentication if needed
-- Add error boundaries
-- Make responsive
-
-Generate ONLY the code, no explanations.`;
-
-    try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      let code = response.content[0].text;
-      const codeMatch = code.match(/```(?:jsx?|javascript|typescript)?\n([\s\S]*?)```/);
-      if (codeMatch) {
-        code = codeMatch[1];
-      }
-
-      return code.trim();
-
-    } catch (error) {
-      console.error(`❌ Page generation error for ${pageSpec.name}:`, error);
-      return this.generateFallbackPage(pageSpec.name);
-    }
-  }
-
-  async generateServices(features) {
-    console.log('🔌 Generating API services...');
-
-    const services = {};
-
-    const apiService = `import axios from 'axios';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
+PACKAGE.JSON must include:
+{
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "axios": "^1.6.0"
   },
-});
-
-// Request interceptor
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = \`Bearer \${token}\`;
-    }
-    return config;
+  "devDependencies": {
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0"
   },
-  (error) => Promise.reject(error)
-);
-
-// Response interceptor
-api.interceptors.response.use(
-  (response) => response.data,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test"
   }
-);
+}
 
-export default api;`;
+Return ONLY valid JSON. No markdown, no code blocks, just JSON.`;
 
-    services['src/services/api.js'] = apiService;
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 16000,
+      messages: [{ role: 'user', content: prompt }]
+    });
 
-    return services;
-  }
-
-  async generateUtils() {
-    const utils = {};
-
-    utils['src/utils/helpers.js'] = `export const formatDate = (date) => {
-  return new Date(date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-};
-
-export const truncateText = (text, maxLength = 100) => {
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength) + '...';
-};
-
-export const debounce = (func, wait) => {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-};`;
-
-    return utils;
-  }
-
-  generateBoilerplate(projectName, framework) {
-    const fileGen = new FileGenerator(projectName);
+    const content = response.content[0].text;
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
     
-    if (framework === 'react') {
-      return {
-        'public/index.html': fileGen.generateIndexHtml(),
-        'src/index.js': fileGen.generateReactIndex(),
-        'src/index.css': fileGen.generateBasicCss(),
-        'package.json': fileGen.generateReactPackageJson(),
-        '.gitignore': fileGen.generateGitignore(),
-        'README.md': fileGen.generateReadme(),
-      };
-    } else if (framework === 'nextjs') {
-      return {
-        'pages/_app.js': fileGen.generateNextAppJs(),
-        'pages/_document.js': fileGen.generateNextDocumentJs(),
-        'styles/globals.css': fileGen.generateBasicCss(),
-        'package.json': fileGen.generateNextPackageJson(),
-        'next.config.js': fileGen.generateNextConfig(),
-        '.gitignore': fileGen.generateGitignore(),
-      };
+    if (!jsonMatch) {
+      throw new Error('AI did not return valid JSON');
     }
 
-    return {};
+    const files = JSON.parse(jsonMatch[0]);
+    
+    // Ensure critical files exist
+    const requiredFiles = ['src/App.js', 'src/index.js', 'package.json', 'public/index.html'];
+    for (const file of requiredFiles) {
+      if (!files[file]) {
+        throw new Error(`Missing critical file: ${file}`);
+      }
+    }
+
+    return files;
   }
 
-  generateFallbackComponent(name) {
-    return `import React from 'react';
+  async validateReactCode(files) {
+    console.log('🔍 Validating React code...');
+    
+    const errors = [];
+    const warnings = [];
 
-const ${name} = () => {
-  return (
-    <div className="p-4">
-      <h2 className="text-xl font-bold">${name}</h2>
-      <p>Component implementation coming soon...</p>
-    </div>
-  );
-};
+    // 1. Validate index.js
+    const indexJs = files['src/index.js'];
+    if (indexJs) {
+      if (!indexJs.includes('createRoot')) errors.push('index.js: Must use React 18 createRoot');
+      if (!indexJs.includes('import React')) errors.push('index.js: Missing React import');
+      if (indexJs.includes('ReactDOM.render')) errors.push('index.js: Using deprecated render method');
+    } else {
+      errors.push('Missing src/index.js file');
+    }
 
-export default ${name};`;
+    // 2. Validate App.js
+    const appJs = files['src/App.js'];
+    if (appJs) {
+      if (!appJs.includes('BrowserRouter') && !appJs.includes('Router')) {
+        warnings.push('App.js: No routing setup detected');
+      }
+      if (appJs.includes('class ') && appJs.includes('extends Component')) {
+        errors.push('App.js: Using class components (must use functional)');
+      }
+      if (!appJs.includes('export default')) {
+        errors.push('App.js: Missing default export');
+      }
+    } else {
+      errors.push('Missing src/App.js file');
+    }
+
+    // 3. Validate package.json
+    const packageJson = files['package.json'];
+    if (packageJson) {
+      try {
+        const pkg = JSON.parse(packageJson);
+        if (!pkg.dependencies?.react) errors.push('package.json: Missing React dependency');
+        if (!pkg.dependencies?.['react-dom']) errors.push('package.json: Missing ReactDOM');
+        if (!pkg.scripts?.start) errors.push('package.json: No start script');
+        
+        // Check React version
+        if (pkg.dependencies?.react && !pkg.dependencies.react.includes('18')) {
+          warnings.push('package.json: React version should be 18.x');
+        }
+      } catch (e) {
+        errors.push('package.json: Invalid JSON');
+      }
+    } else {
+      errors.push('Missing package.json file');
+    }
+
+    // 4. Validate components
+    for (const [filename, code] of Object.entries(files)) {
+      if (filename.endsWith('.js') || filename.endsWith('.jsx')) {
+        // Check syntax
+        if (!this.isBalanced(code, '{', '}')) errors.push(`${filename}: Unbalanced braces`);
+        if (!this.isBalanced(code, '(', ')')) errors.push(`${filename}: Unbalanced parentheses`);
+        
+        // Check for class components
+        if (code.includes('class ') && code.includes('extends Component')) {
+          errors.push(`${filename}: Class components not allowed`);
+        }
+        
+        // Check for inline styles
+        if (code.includes('style={{')) {
+          warnings.push(`${filename}: Inline styles detected (use Tailwind)`);
+        }
+        
+        // Check for TODO comments
+        if (code.includes('TODO') || code.includes('FIXME')) {
+          warnings.push(`${filename}: Incomplete implementation`);
+        }
+      }
+    }
+
+    // 5. Validate HTML
+    const indexHtml = files['public/index.html'];
+    if (indexHtml) {
+      if (!indexHtml.includes('<!DOCTYPE html>')) errors.push('index.html: Missing DOCTYPE');
+      if (!indexHtml.includes('<div id="root">')) errors.push('index.html: Missing root div');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      score: this.calculateValidationScore(errors, warnings)
+    };
   }
 
-  generateFallbackPage(name) {
-    return `import React from 'react';
+  async autoFixReactCode(files, errors) {
+    console.log('🔧 Auto-fixing React code...');
 
-const ${name} = () => {
-  return (
-    <div className="min-h-screen p-8">
-      <h1 className="text-3xl font-bold mb-4">${name}</h1>
-      <p>Page implementation coming soon...</p>
-    </div>
-  );
-};
+    const fixPrompt = `Fix these errors in the React application:
 
-export default ${name};`;
+ERRORS TO FIX:
+${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}
+
+CURRENT CODE:
+${JSON.stringify(files, null, 2)}
+
+Return the FIXED code as JSON with same structure. Requirements:
+- Use React 18 createRoot (not ReactDOM.render)
+- Functional components only (no classes)
+- Proper imports and exports
+- Balanced braces/parentheses
+- Tailwind CSS classes (no inline styles)
+- Complete implementations (no TODOs)
+- Valid package.json with React 18
+
+Return ONLY valid JSON, no explanations.`;
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 16000,
+      messages: [{ role: 'user', content: fixPrompt }]
+    });
+
+    const content = response.content[0].text;
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    
+    if (!jsonMatch) {
+      console.error('❌ Auto-fix failed: Invalid response');
+      return files;
+    }
+
+    return JSON.parse(jsonMatch[0]);
+  }
+
+  isBalanced(code, open, close) {
+    let count = 0;
+    for (const char of code) {
+      if (char === open) count++;
+      if (char === close) count--;
+      if (count < 0) return false;
+    }
+    return count === 0;
+  }
+
+  calculateValidationScore(errors, warnings) {
+    let score = 100;
+    score -= errors.length * 15;
+    score -= warnings.length * 5;
+    return Math.max(0, score);
+  }
+
+  calculateStats(files) {
+    const fileCount = Object.keys(files).length;
+    const totalLines = Object.values(files).reduce((sum, code) => 
+      sum + code.split('\n').length, 0
+    );
+
+    return {
+      total_files: fileCount,
+      total_lines: totalLines,
+      total_size_kb: (Object.values(files).reduce((sum, code) => sum + code.length, 0) / 1024).toFixed(2),
+      breakdown: {
+        components: Object.keys(files).filter(f => f.includes('components/')).length,
+        pages: Object.keys(files).filter(f => f.includes('pages/')).length,
+        services: Object.keys(files).filter(f => f.includes('services/')).length,
+        utils: Object.keys(files).filter(f => f.includes('utils/')).length
+      }
+    };
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 

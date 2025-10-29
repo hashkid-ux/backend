@@ -9,7 +9,7 @@ class StrategyAgent {
 
     
     // Model selection based on tier
-    this.model = 'deepseek/deepseek-chat';
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
 
   }
 
