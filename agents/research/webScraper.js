@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const cheerio = require('cheerio');
 const NodeCache = require('node-cache');
+const axios = require('axios');
 
 // Cache scraped data for 24 hours to save costs
 const cache = new NodeCache({ stdTTL: 86400 });
@@ -8,6 +9,7 @@ const cache = new NodeCache({ stdTTL: 86400 });
 class WebScraper {
   constructor() {
     this.browser = null;
+    this.browserAvailable = true; // Flag to track browser availability
     this.userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -16,11 +18,29 @@ class WebScraper {
   }
 
   async initBrowser() {
+    if (!this.browserAvailable) {
+      console.warn('⚠️  Browser unavailable, using fallback mode');
+      return null;
+    }
+
     if (!this.browser) {
-      this.browser = await chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
+      try {
+        this.browser = await chromium.launch({
+          headless: true,
+          args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu'
+          ]
+        });
+        console.log('✅ Browser launched successfully');
+      } catch (error) {
+        console.error('❌ Browser launch failed:', error.message);
+        this.browserAvailable = false;
+        this.browser = null;
+      }
     }
     return this.browser;
   }
@@ -36,6 +56,39 @@ class WebScraper {
     return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
   }
 
+  // Fallback: Simple HTTP GET without browser
+  async scrapeFallback(url) {
+    console.log(`📡 Using fallback HTTP scraping for: ${url}`);
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': this.getRandomUserAgent(),
+        },
+        timeout: 10000
+      });
+
+      const $ = cheerio.load(response.data);
+
+      return {
+        title: $('title').text(),
+        metaDescription: $('meta[name="description"]').attr('content') || '',
+        headings: $('h1, h2, h3').map((i, el) => $(el).text().trim()).get(),
+        links: $('a').map((i, el) => $(el).attr('href')).get().filter(Boolean),
+        text: $('body').text().replace(/\s+/g, ' ').trim().substring(0, 5000)
+      };
+    } catch (error) {
+      console.error(`❌ Fallback scraping failed for ${url}:`, error.message);
+      return { 
+        error: error.message, 
+        url,
+        title: '',
+        text: '',
+        headings: [],
+        links: []
+      };
+    }
+  }
+
   // Scrape a single page
   async scrapePage(url, options = {}) {
     const cacheKey = `page_${url}`;
@@ -47,8 +100,14 @@ class WebScraper {
 
     console.log(`🌐 Scraping: ${url}`);
 
+    // Try browser first, fallback to simple HTTP
+    const browser = await this.initBrowser();
+    
+    if (!browser) {
+      return await this.scrapeFallback(url);
+    }
+
     try {
-      const browser = await this.initBrowser();
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent(),
         viewport: { width: 1920, height: 1080 }
@@ -64,7 +123,9 @@ class WebScraper {
 
       // Wait for specific selector if provided
       if (options.waitForSelector) {
-        await page.waitForSelector(options.waitForSelector, { timeout: 10000 });
+        await page.waitForSelector(options.waitForSelector, { timeout: 10000 }).catch(() => {
+          console.warn('⚠️  Selector not found, continuing anyway');
+        });
       }
 
       // Get page content
@@ -104,7 +165,10 @@ class WebScraper {
 
     } catch (error) {
       console.error(`❌ Scraping error for ${url}:`, error.message);
-      return { error: error.message, url };
+      
+      // Try fallback
+      console.log('🔄 Attempting fallback method...');
+      return await this.scrapeFallback(url);
     }
   }
 
@@ -152,15 +216,22 @@ class WebScraper {
 
     console.log(`🔍 Google search: "${query}"`);
 
+    // Try browser first
+    const browser = await this.initBrowser();
+    
+    if (!browser) {
+      console.warn('⚠️  Browser unavailable for Google search, returning empty results');
+      return [];
+    }
+
     try {
-      const browser = await this.initBrowser();
       const context = await browser.newContext({
         userAgent: this.getRandomUserAgent()
       });
       const page = await context.newPage();
 
       const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${numResults}`;
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
       // Wait a bit for results to load
       await page.waitForTimeout(2000);
@@ -227,6 +298,12 @@ class WebScraper {
 
     try {
       const browser = await this.initBrowser();
+      
+      if (!browser) {
+        console.warn('⚠️  Browser unavailable for review extraction');
+        return [];
+      }
+
       const context = await browser.newContext();
       const page = await context.newPage();
 
