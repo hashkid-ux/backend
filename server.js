@@ -109,8 +109,8 @@ const profileRouter = require('./routes/profileWithDB');
 
 // Legacy routes (keep for compatibility)
 const validateRouter = require('./routes/validate');
-const generateRouter = require('./routes/generate');
-const researchRouter = require('./routes/research');
+const generateRouter = require('./routes/generateUltra');
+const researchRouter = require('./routes/researchUltra');
 const deployRouter = require('./routes/deploy');
 const masterBuildRouter = require('./routes/masterBuild');
 

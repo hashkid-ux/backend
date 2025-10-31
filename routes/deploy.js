@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const DeployAgent = require('../agents/deployment/deployAgent');
-const QAAgent = require('../agents/testing/qaAgent');
+const DeployAgent = require('../agents/deployment/deployAgentUltra');
+const QAAgent = require('../agents/testing/qaAgentUltra');
 
 const checkTier = (req, res, next) => {
   req.userTier = req.headers['x-user-tier'] || 'free';

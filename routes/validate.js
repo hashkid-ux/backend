@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const StrategyAgent = require('../agents/strategyAgent');
+const StrategyAgent = require('../agents/strategyAgentUltra');
 
 // Middleware to check user tier (we'll implement auth later)
 const checkTier = (req, res, next) => {
