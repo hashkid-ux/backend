@@ -537,35 +537,48 @@ async function createDownloadPackage(buildId, projectName, results) {
     archive.pipe(output);
 
     try {
+      // CRITICAL FIX: Validate results structure
+      if (!results.phase3) {
+        throw new Error('Missing phase3 results');
+      }
+
       // Add frontend files
-      if (results.phase3?.frontend?.files) {
+      if (results.phase3.frontend?.files) {
         Object.entries(results.phase3.frontend.files).forEach(([filepath, content]) => {
           archive.append(content, { name: `frontend/${filepath}` });
         });
+        console.log(`✅ Added ${Object.keys(results.phase3.frontend.files).length} frontend files`);
       }
 
       // Add backend files
-      if (results.phase3?.backend?.files) {
+      if (results.phase3.backend?.files) {
         Object.entries(results.phase3.backend.files).forEach(([filepath, content]) => {
           archive.append(content, { name: `backend/${filepath}` });
         });
+        console.log(`✅ Added ${Object.keys(results.phase3.backend.files).length} backend files`);
       }
 
-      // Add database files
-      if (results.phase3?.database) {
-        if (results.phase3.database.migrations) {
+      // Add database files with proper validation
+      if (results.phase3.database) {
+        // Migrations
+        if (Array.isArray(results.phase3.database.migrations)) {
           results.phase3.database.migrations.forEach((migration, i) => {
-            const sql = typeof migration === 'string' ? migration : migration.sql;
-            archive.append(sql, { 
-              name: `database/migrations/${String(i + 1).padStart(3, '0')}_migration.sql` 
-            });
+            const sql = typeof migration === 'string' ? migration : migration.sql || '';
+            const name = migration.name || `${String(i + 1).padStart(3, '0')}_migration.sql`;
+            
+            if (sql) {
+              archive.append(sql, { name: `database/migrations/${name}` });
+            }
           });
+          console.log(`✅ Added ${results.phase3.database.migrations.length} migrations`);
         }
 
+        // Prisma schema
         if (results.phase3.database.prisma_schema) {
           archive.append(results.phase3.database.prisma_schema, { 
             name: 'backend/prisma/schema.prisma' 
           });
+          console.log('✅ Added Prisma schema');
         }
       }
 

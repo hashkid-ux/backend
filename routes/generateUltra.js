@@ -247,10 +247,11 @@ async function createDownloadPackageUltra(projectName, results) {
     // Add database files
     if (results.database) {
       if (results.database.migrations) {
-        results.database.migrations.forEach(migration => {
-          const sql = typeof migration === 'string' ? migration : migration.sql;
-          archive.append(sql, { name: `database/migrations/${migration.name || 'migration.sql'}` });
-        });
+        results.phase3.database.migrations.forEach((migration, i) => {
+    const sql = typeof migration === 'string' ? migration : migration.sql;
+    const name = migration.name || `migration_${String(i + 1).padStart(3, '0')}.sql`;
+    archive.append(sql, { name: `database/migrations/${name}` });
+  });
       }
 
       if (results.database.prisma_schema) {
