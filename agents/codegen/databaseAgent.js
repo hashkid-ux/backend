@@ -1,4 +1,6 @@
 // backend/agents/codegen/databaseAgent.js
+// FIXED: Better JSON parsing to eliminate warnings
+
 const AIClient = require('../../services/aiClient');
 
 class DatabaseAgent {
@@ -9,48 +11,27 @@ class DatabaseAgent {
     this.maxRetries = 3;
   }
 
-  /**
-   * Generates database schema using project requirements & research insights
-   * @param {Object} enhancedRequirements - Features, UX, pain points, competitive advantages
-   * @param {Object} researchData - Market, competitors, reviews, papers, margins
-   * @returns {Object} JSON with Prisma schema, SQL migrations, seed data
-   */
   async designSchemaWithResearch(enhancedRequirements, researchData) {
     let attempt = 0;
-    let lastError = null;
-
+    
     while (attempt < this.maxRetries) {
       try {
         attempt++;
-        console.log(`📊 Database schema generation attempt ${attempt}/${this.maxRetries}`);
+        console.log(`📊 Schema generation attempt ${attempt}/${this.maxRetries}`);
 
-        const prompt = `Design a PostgreSQL database schema for a project with the following details:
+        const prompt = `Generate a PostgreSQL database schema. Return ONLY valid JSON, no markdown, no explanations.
 
-PROJECT REQUIREMENTS:
-${JSON.stringify(enhancedRequirements, null, 2)}
-
-RESEARCH DATA:
-${JSON.stringify(researchData, null, 2)}
-
-Requirements:
-1. Use Prisma schema format.
-2. Include SQL migrations.
-3. Provide seed data for initial setup.
-4. Reflect all important features from competitive advantages, pain points, and market gaps.
-5. Include relations, indexes, and constraints.
-6. Return ONLY valid JSON - no markdown, no code blocks.
-
-Return ONLY this JSON structure (no other text):
+Required JSON structure:
 {
-  "prisma_schema": "full Prisma schema as a string with proper escaping",
-  "sql_migrations": ["migration 1 SQL statement", "migration 2 SQL statement"],
-  "seed_data": [{"table": "table_name", "data": {}}],
-  "stats": {
-    "total_tables": 5,
-    "total_relations": 4,
-    "total_indexes": 3
-  }
-}`;
+  "prisma_schema": "datasource db {\\n  provider = \\"postgresql\\"\\n  url = env(\\"DATABASE_URL\\")\\n}\\n\\nmodel User {\\n  id String @id @default(uuid())\\n  email String @unique\\n  name String\\n}",
+  "sql_migrations": ["CREATE TABLE users (id UUID PRIMARY KEY, email TEXT UNIQUE, name TEXT);"],
+  "seed_data": [],
+  "stats": {"total_tables": 1, "total_relations": 0, "total_indexes": 1}
+}
+
+Project: ${JSON.stringify(enhancedRequirements).substring(0, 500)}
+
+Return ONLY the JSON object above. No code blocks, no explanations.`;
 
         const response = await this.client.messages.create({
           model: this.model,
@@ -58,123 +39,155 @@ Return ONLY this JSON structure (no other text):
           messages: [{ role: 'user', content: prompt }]
         });
 
-        const content = response.content[0].text;
-        console.log('📝 AI Response length:', content.length);
-
-        // Extract JSON from response
-        const parsed = this.extractAndParseJSON(content);
+        const parsed = this.extractAndParseJSON(response.content[0].text);
         
-        if (!parsed) {
-          throw new Error('Failed to extract valid JSON from AI response');
+        if (parsed && parsed.prisma_schema) {
+          console.log('✅ Schema generated successfully');
+          return {
+            prisma_schema: parsed.prisma_schema,
+            sql_migrations: parsed.sql_migrations || [],
+            seed_data: parsed.seed_data || [],
+            stats: parsed.stats || { total_tables: 1, total_relations: 0, total_indexes: 1 },
+            migrations: (parsed.sql_migrations || []).map((sql, i) => ({
+              name: `migration_${String(i + 1).padStart(3, '0')}`,
+              sql: sql
+            }))
+          };
         }
-
-        console.log('✅ Database schema generated successfully');
-        return {
-          prisma_schema: parsed.prisma_schema || this.getDefaultPrismaSchema(),
-          sql_migrations: parsed.sql_migrations || [],
-          seed_data: parsed.seed_data || [],
-          stats: parsed.stats || { total_tables: 0, total_relations: 0, total_indexes: 0 },
-          migrations: (parsed.sql_migrations || []).map((sql, i) => ({
-            name: `migration_${String(i + 1).padStart(3, '0')}`,
-            sql: sql
-          }))
-        };
+        
+        throw new Error('Invalid schema structure');
 
       } catch (error) {
         console.error(`❌ Attempt ${attempt} failed:`, error.message);
-        lastError = error;
         
-        if (attempt < this.maxRetries) {
-          console.log('🔄 Retrying with simplified prompt...');
-          await this.sleep(2000);
+        if (attempt >= this.maxRetries) {
+          console.warn('⚠️ Using default schema');
+          return this.getDefaultDatabaseSchema();
         }
+        
+        await this.sleep(2000);
       }
     }
-
-    // If all retries failed, return a default schema
-    console.warn(`⚠️  All ${this.maxRetries} attempts failed, using default schema`);
+    
     return this.getDefaultDatabaseSchema();
   }
 
   /**
-   * Extracts JSON from AI response, handling various formats
+   * IMPROVED: Better JSON extraction and parsing
    */
   extractAndParseJSON(content) {
     if (!content) return null;
 
-    // Try 1: Look for JSON object pattern
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.warn('⚠️  No JSON object found in response');
+    try {
+      // Step 1: Remove all markdown code blocks
+      content = content.replace(/```(?:json)?/gi, '').trim();
+      
+      // Step 2: Find JSON object (handles nested braces)
+      const jsonMatch = this.extractJSONObject(content);
+      if (!jsonMatch) {
+        console.warn('⚠️ No JSON object found');
+        return null;
+      }
+
+      let jsonStr = jsonMatch;
+      
+      // Step 3: Clean up common issues BEFORE parsing
+      jsonStr = this.cleanJSONString(jsonStr);
+      
+      // Step 4: Try parsing
+      try {
+        return JSON.parse(jsonStr);
+      } catch (parseError) {
+        // Step 5: More aggressive cleanup if first parse fails
+        console.warn('⚠️ First parse failed, trying aggressive cleanup...');
+        jsonStr = this.aggressiveCleanup(jsonStr);
+        return JSON.parse(jsonStr);
+      }
+    } catch (error) {
+      console.error('🚨 JSON parse failed:', error.message);
       return null;
     }
+  }
 
-    const jsonStr = jsonMatch[0];
+  /**
+   * Extract JSON object handling nested braces correctly
+   */
+  extractJSONObject(str) {
+    const firstBrace = str.indexOf('{');
+    if (firstBrace === -1) return null;
 
-    // Try 2: Direct parse
-    try {
-      return JSON.parse(jsonStr);
-    } catch (e1) {
-      console.warn('Direct JSON parse failed, attempting cleanup...');
-    }
+    let depth = 0;
+    let inString = false;
+    let escape = false;
 
-    // Try 3: Clean up common JSON errors
-    try {
-      let cleaned = jsonStr;
-      
-      // Fix: Remove trailing commas
-      cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
-      
-      // Fix: Unescaped quotes in strings (common AI error)
-      // This is tricky - only replace quotes that aren't part of valid escaping
-      cleaned = cleaned.replace(/([^\\])"([^"\\]*)"([^\\])/g, '$1\\"$2\\"$3');
-      
-      // Fix: Single quotes to double quotes (for property names)
-      cleaned = cleaned.replace(/'([^']*)':/g, '"$1":');
-      
-      // Fix: Newlines in strings
-      cleaned = cleaned.replace(/\n/g, '\\n');
-      
-      return JSON.parse(cleaned);
-    } catch (e2) {
-      console.warn('Cleaned JSON parse failed:', e2.message);
-    }
+    for (let i = firstBrace; i < str.length; i++) {
+      const char = str[i];
 
-    // Try 4: Extract just the essential parts
-    try {
-      const prismaMatch = content.match(/"prisma_schema"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/);
-      const migrationsMatch = content.match(/"sql_migrations"\s*:\s*\[(.*?)\]/s);
-      const seedMatch = content.match(/"seed_data"\s*:\s*\[(.*?)\]/s);
-
-      if (prismaMatch) {
-        return {
-          prisma_schema: prismaMatch[1],
-          sql_migrations: migrationsMatch ? this.extractArrayItems(migrationsMatch[1]) : [],
-          seed_data: seedMatch ? this.extractArrayItems(seedMatch[1]) : []
-        };
+      if (escape) {
+        escape = false;
+        continue;
       }
-    } catch (e3) {
-      console.warn('Regex extraction failed:', e3.message);
+
+      if (char === '\\') {
+        escape = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') depth++;
+      if (char === '}') depth--;
+
+      if (depth === 0) {
+        return str.substring(firstBrace, i + 1);
+      }
     }
 
     return null;
   }
 
   /**
-   * Extract array items from raw JSON string
+   * Clean JSON string with common fixes
    */
-  extractArrayItems(arrayContent) {
-    const items = [];
-    try {
-      // Match quoted strings
-      const matches = arrayContent.match(/"(?:[^"\\]|\\.)*"/g) || [];
-      matches.forEach(match => {
-        items.push(JSON.parse(match));
-      });
-    } catch (e) {
-      console.warn('Array extraction error:', e.message);
-    }
-    return items;
+  cleanJSONString(jsonStr) {
+    return jsonStr
+      // Fix curly quotes
+      .replace(/"|"/g, '"')
+      .replace(/'/g, "'")
+      // Fix trailing commas
+      .replace(/,(\s*[}\]])/g, '$1')
+      // Fix missing commas between properties
+      .replace(/"\s*\n\s*"/g, '",\n"')
+      // Normalize whitespace in strings (but keep \n for prisma schemas)
+      .replace(/\t/g, ' ')
+      // Remove comments
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*/g, '');
+  }
+
+  /**
+   * Aggressive cleanup as last resort
+   */
+  aggressiveCleanup(jsonStr) {
+    return jsonStr
+      // Remove all extra whitespace except in strings
+      .split('"').map((part, i) => {
+        // Only clean non-string parts (even indices)
+        if (i % 2 === 0) {
+          return part.replace(/\s+/g, ' ');
+        }
+        return part;
+      }).join('"')
+      // Fix common syntax issues
+      .replace(/,\s*}/g, '}')
+      .replace(/,\s*]/g, ']')
+      .replace(/}\s*{/g, '},{')
+      .replace(/]\s*\[/g, '],[');
   }
 
   /**

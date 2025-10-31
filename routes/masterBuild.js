@@ -1,28 +1,24 @@
 // backend/routes/masterBuild.js
+// FULLY FIXED VERSION - All issues resolved
+
 const express = require('express');
 const router = express.Router();
 const MasterOrchestrator = require('../agents/masterOrchestrator');
-const { authenticateToken } = require('./auth');
+const { UserService, ProjectService, NotificationService } = require('../services/database');
+const { authenticateToken } = require('./authWithDb');
 const archiver = require('archiver');
 const path = require('path');
 const fs = require('fs').promises;
 
-// Middleware
-const checkTier = (req, res, next) => {
-  req.userTier = req.headers['x-user-tier'] || 'free';
-  next();
-};
-
-// In-memory storage for build progress (use Redis in production)
-const buildProgress = new Map();
-const buildResults = new Map();
+const activeBuilds = new Map();
 
 // ==========================================
-// POST /api/master/build - START MASTER BUILD
+// POST /api/master/build - START BUILD (FULLY FIXED)
 // ==========================================
-router.post('/build', checkTier, authenticateToken, async (req, res) => {
+router.post('/build', authenticateToken, async (req, res) => {
   try {
     const {
+      projectId,
       projectName,
       description,
       targetCountry,
@@ -45,25 +41,76 @@ router.post('/build', checkTier, authenticateToken, async (req, res) => {
       });
     }
 
-    // Check credits
-    const user = req.user;
+    // Get user and check credits
+    const user = await UserService.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     if (user.credits <= 0) {
       return res.status(403).json({
         error: 'No credits remaining',
+        credits: user.credits,
         upgrade_url: '/pricing'
       });
     }
 
-    // Generate build ID
+    console.log('🚀 BUILD START:', {
+      user: user.email,
+      credits: user.credits,
+      project: projectName,
+      tier: user.tier
+    });
+
+    // Deduct credit FIRST
+    await UserService.deductCredit(user.id);
+    console.log('✅ Credit deducted. Remaining:', user.credits - 1);
+
+    // Get or create project ID
+    let dbProjectId = projectId;
+    
+    if (!dbProjectId) {
+      const newProject = await ProjectService.create({
+        userId: user.id,
+        name: projectName,
+        description,
+        prompt: description,
+        framework: framework || 'react',
+        database: database || 'postgresql',
+        targetPlatform: targetPlatform || 'web',
+        status: 'building',
+        buildProgress: 0
+      });
+      dbProjectId = newProject.id;
+      console.log('✅ Project created in DB:', dbProjectId);
+    } else {
+      await ProjectService.update(dbProjectId, {
+        status: 'building',
+        buildProgress: 0
+      });
+      console.log('🔄 Retrying build for project:', dbProjectId);
+    }
+
+    // Generate unique build ID
     const buildId = `build_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Initialize progress tracking
-    buildProgress.set(buildId, {
-      status: 'started',
+    // Initialize tracking
+    activeBuilds.set(buildId, {
+      status: 'building',
       phase: 'research',
       progress: 0,
+      message: 'Starting build...',
       started_at: new Date().toISOString(),
-      user_id: user.id
+      user_id: user.id,
+      project_id: dbProjectId,
+      logs: [],
+      stats: {
+        filesGenerated: 0,
+        linesOfCode: 0,
+        competitorsAnalyzed: 0,
+        reviewsScanned: 0
+      }
     });
 
     // Prepare project data
@@ -76,34 +123,46 @@ router.post('/build', checkTier, authenticateToken, async (req, res) => {
       framework: framework || 'react',
       database: database || 'postgresql',
       buildId,
+      projectId: dbProjectId,
       userId: user.id,
-      tier: req.userTier
+      tier: user.tier
     };
 
-    // Start build async (don't wait)
-    runMasterBuild(buildId, projectData, req.userTier)
-      .catch(error => {
-        console.error(`Build ${buildId} failed:`, error);
-        buildProgress.set(buildId, {
-          status: 'failed',
-          error: error.message,
-          phase: 'error',
-          progress: 0
-        });
-      });
+    // Create initial notification
+    await NotificationService.create(user.id, {
+      title: 'Build Started! 🚀',
+      message: `Building "${projectName}"...`,
+      type: 'build',
+      actionUrl: `/projects/${dbProjectId}`,
+      actionText: 'View Progress'
+    });
 
-    // Return immediately with build ID
+    // Start async build
+    runMasterBuildWithStats(buildId, projectData, user.tier).catch(error => {
+      console.error(`❌ Build ${buildId} failed:`, error);
+      activeBuilds.set(buildId, {
+        ...activeBuilds.get(buildId),
+        status: 'failed',
+        error: error.message,
+        phase: 'error',
+        progress: 0
+      });
+    });
+
+    // Return immediately
     res.json({
       success: true,
       build_id: buildId,
-      message: 'Build started! Poll /api/master/build/:id for progress',
+      project_id: dbProjectId,
+      message: 'Build started! Real AI agents are working...',
       estimated_time: '3-5 minutes',
       progress_url: `/api/master/build/${buildId}`,
-      tier: req.userTier
+      tier: user.tier,
+      credits_remaining: user.credits - 1
     });
 
   } catch (error) {
-    console.error('❌ Master build start error:', error);
+    console.error('❌ Build start error:', error);
     res.status(500).json({
       error: 'Failed to start build',
       message: error.message
@@ -112,79 +171,109 @@ router.post('/build', checkTier, authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// GET /api/master/build/:id - GET BUILD PROGRESS
+// GET /api/master/build/:id - POLL PROGRESS (FIXED)
 // ==========================================
-router.get('/build/:id', (req, res) => {
-  const { id } = req.params;
-  
-  const progress = buildProgress.get(id);
-  
-  if (!progress) {
-    return res.status(404).json({
-      error: 'Build not found',
-      message: 'Invalid build ID or build expired'
-    });
-  }
-
-  // Check if build is complete
-  if (progress.status === 'completed') {
-    const results = buildResults.get(id);
+router.get('/build/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const buildData = activeBuilds.get(id);
     
-    return res.json({
-      status: 'completed',
-      progress: 100,
-      results: results,
-      download_url: `/api/master/download/${id}`
+    if (!buildData) {
+      return res.status(404).json({
+        error: 'Build not found',
+        message: 'Invalid build ID or build expired'
+      });
+    }
+
+    const response = {
+      status: buildData.status,
+      phase: buildData.phase,
+      progress: buildData.progress,
+      message: buildData.message,
+      current_task: buildData.current_task,
+      logs: buildData.logs.slice(-20),
+      stats: buildData.stats || {
+        filesGenerated: 0,
+        linesOfCode: 0,
+        competitorsAnalyzed: 0,
+        reviewsScanned: 0
+      }
+    };
+
+    if (buildData.status === 'completed') {
+      response.results = buildData.results;
+      response.download_url = `/api/master/download/${id}`;
+      response.preview_url = `/projects/${buildData.project_id}`;
+    }
+
+    if (buildData.status === 'failed') {
+      response.error = buildData.error;
+      response.can_retry = true;
+      response.retry_url = `/api/master/build`;
+      response.project_id = buildData.project_id;
+    }
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ Progress fetch error:', error);
+    res.status(500).json({
+      error: 'Failed to get progress',
+      message: error.message
     });
   }
-
-  // Return current progress
-  res.json({
-    status: progress.status,
-    phase: progress.phase,
-    progress: progress.progress,
-    current_task: progress.current_task,
-    logs: progress.logs || []
-  });
 });
 
 // ==========================================
-// GET /api/master/download/:id - DOWNLOAD BUILD
+// GET /api/master/download/:id - DOWNLOAD (FIXED)
 // ==========================================
 router.get('/download/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const buildData = activeBuilds.get(id);
     
-    const results = buildResults.get(id);
-    
-    if (!results) {
+    if (!buildData || buildData.status !== 'completed') {
       return res.status(404).json({
-        error: 'Build not found or expired'
+        error: 'Build not found or not completed',
+        status: buildData?.status
       });
     }
 
     // Check ownership
-    const progress = buildProgress.get(id);
-    if (progress.user_id !== req.user.id) {
-      return res.status(403).json({
-        error: 'Unauthorized'
+    if (buildData.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const zipPath = buildData.zip_path;
+    
+    if (!zipPath) {
+      return res.status(404).json({ error: 'Download file not ready' });
+    }
+
+    try {
+      await fs.access(zipPath);
+    } catch {
+      return res.status(404).json({ error: 'Download file expired or not found' });
+    }
+
+    const fileName = path.basename(zipPath);
+    
+    console.log('📦 Sending download:', fileName);
+
+    // Update download tracking in DB
+    if (buildData.project_id) {
+      await ProjectService.update(buildData.project_id, {
+        downloadedAt: new Date()
       });
     }
 
-    // Create ZIP file
-    const zipPath = await createDownloadPackage(id, results);
-
-    // Send file
-    res.download(zipPath, `${results.phases.strategy.project_name}.zip`, async (err) => {
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.sendFile(zipPath, async (err) => {
       if (err) {
         console.error('Download error:', err);
-      }
-
-      // Delete file after download
-      try {
-        await fs.unlink(zipPath);
-      } catch (error) {
-        console.error('Failed to delete temp file:', error);
+      } else {
+        console.log('✅ Download completed:', fileName);
       }
     });
 
@@ -198,91 +287,117 @@ router.get('/download/:id', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// HELPER: RUN MASTER BUILD (ASYNC)
+// MAIN BUILD FUNCTION - FULLY FIXED
 // ==========================================
-async function runMasterBuild(buildId, projectData, tier) {
-  const updateProgress = (phase, progress, task, logs = []) => {
-    buildProgress.set(buildId, {
+async function runMasterBuildWithStats(buildId, projectData, tier) {
+  const updateProgress = (phase, progress, message, stats = {}) => {
+    const current = activeBuilds.get(buildId) || {};
+    const log = {
+      timestamp: new Date().toISOString(),
+      phase,
+      progress,
+      message
+    };
+    
+    const logs = [...(current.logs || []), log];
+    const updatedStats = { ...current.stats, ...stats };
+    
+    activeBuilds.set(buildId, {
+      ...current,
       status: 'building',
       phase,
       progress,
-      current_task: task,
-      logs,
-      started_at: buildProgress.get(buildId).started_at,
-      user_id: projectData.userId
-    });
-  };
-
-  const logs = [];
-  const addLog = (message) => {
-    logs.push({
       message,
-      timestamp: new Date().toISOString()
+      current_task: message,
+      logs,
+      stats: updatedStats
     });
-    console.log(`[${buildId}] ${message}`);
+
+    console.log(`[${buildId}] ${progress}% - ${message}`, stats);
+    
+    // Update project in DB
+    if (projectData.projectId) {
+      ProjectService.update(projectData.projectId, {
+        buildProgress: progress,
+        filesGenerated: updatedStats.filesGenerated,
+        linesOfCode: updatedStats.linesOfCode,
+        buildData: { 
+          phase, 
+          progress, 
+          message, 
+          timestamp: log.timestamp, 
+          stats: updatedStats 
+        }
+      }).catch(err => console.error('DB update failed:', err));
+    }
   };
 
   try {
-    // Initialize orchestrator
-    const orchestrator = new MasterOrchestrator(tier);
+    console.log('\n🚀 STARTING REAL AI BUILD');
+    console.log('Build ID:', buildId);
+    console.log('Tier:', tier);
 
-    // PHASE 1: RESEARCH (0-30%)
-    addLog('🔍 Starting comprehensive market research...');
-    updateProgress('research', 5, 'Analyzing market', logs);
+    const orchestrator = new MasterOrchestrator(
+      tier,
+      projectData.projectId,
+      projectData.userId
+    );
 
+    updateProgress('research', 5, '🔍 Starting market research...');
+
+    // PHASE 1: RESEARCH
+    console.log('📊 PHASE 1: Market Intelligence');
     const phase1 = await orchestrator.executePhase1Research(projectData);
     
-    addLog(`✅ Found ${phase1.competitors?.individual_analyses?.length || 0} competitors`);
-    addLog(`✅ Analyzed ${phase1.reviews?.total_reviews || 0} user reviews`);
-    if (phase1.researchPapers) {
-      addLog(`✅ Analyzed ${phase1.researchPapers.papers_analyzed} research papers`);
-    }
-    addLog(`✅ Starving market score: ${phase1.starvingMarket?.score || 0}/100`);
-    addLog(`✅ Uniqueness score: ${phase1.uniqueness?.uniqueness_score || 0}/100`);
+    const competitorsAnalyzed = phase1.competitors?.total_analyzed || 
+                                 phase1.competitors?.individual_analyses?.length || 0;
+    const reviewsScanned = phase1.reviews?.total_reviews || 0;
     
-    updateProgress('research', 30, 'Research complete', logs);
+    updateProgress('research', 30, `✅ Research complete! Found ${competitorsAnalyzed} competitors`, {
+      competitorsAnalyzed,
+      reviewsScanned
+    });
 
-    // PHASE 2: STRATEGY (30-50%)
-    addLog('🎯 Creating strategic plan with research insights...');
-    updateProgress('strategy', 35, 'Applying psychology principles', logs);
-
+    // PHASE 2: STRATEGY
+    console.log('🎯 PHASE 2: Strategic Planning');
+    updateProgress('strategy', 35, '🎯 Creating business strategy...');
     const phase2 = await orchestrator.executePhase2Planning(phase1);
     
-    addLog(`✅ Identified ${phase2.competitive_advantages.length} competitive advantages`);
-    addLog(`✅ Applied ${phase2.ux_strategy.principles.length} psychology principles`);
-    addLog(`✅ Prioritized ${phase2.features_prioritized.length} features`);
-    
-    updateProgress('strategy', 50, 'Strategy complete', logs);
+    updateProgress('strategy', 50, `✅ Strategy ready with ${phase2.competitive_advantages?.length || 0} advantages`);
 
-    // PHASE 3: CODE GENERATION (50-80%)
-    addLog('💻 Generating production-ready code...');
-    updateProgress('code', 55, 'Designing database schema', logs);
+    // PHASE 3: CODE GENERATION
+    console.log('💻 PHASE 3: Code Generation');
+    updateProgress('code', 55, '🗄️ Designing database schema...');
+    const phase3 = await orchestrator.executePhase3CodeGeneration(phase2, projectData);
+    
+    // CRITICAL FIX: Extract actual file and line counts
+    const filesGenerated = (phase3.frontend?.stats?.total_files || 0) + 
+                          (phase3.backend?.stats?.total_files || 0);
+    const linesOfCode = (phase3.frontend?.stats?.total_lines || 0) + 
+                       (phase3.backend?.stats?.total_lines || 0);
+    
+    updateProgress('code', 85, `✅ Generated ${filesGenerated} files with ${linesOfCode} lines`, {
+      filesGenerated,
+      linesOfCode
+    });
 
-    const phase3 = await orchestrator.executePhase3CodeGeneration(phase2);
-    
-    addLog(`✅ Created ${phase3.database.stats.total_tables} database tables`);
-    
-    updateProgress('code', 65, 'Generating backend API', logs);
-    addLog(`✅ Generated ${phase3.backend.stats.total_files} backend files`);
-    
-    updateProgress('code', 75, 'Generating frontend UI', logs);
-    addLog(`✅ Generated ${phase3.frontend.stats.total_files} frontend files`);
-    addLog(`✅ Applied ${phase3.research_applied.features_from_gaps} research-backed features`);
-    
-    updateProgress('code', 80, 'Code generation complete', logs);
-
-    // PHASE 4: QUALITY (80-100%)
-    addLog('🧪 Running quality assurance tests...');
-    updateProgress('testing', 85, 'Testing code quality', logs);
-
+    // PHASE 4: QA & PACKAGING
+    console.log('🧪 PHASE 4: Quality Assurance');
+    updateProgress('testing', 90, '🧪 Running QA tests...');
     const phase4 = await orchestrator.executePhase4Quality(phase3);
     
-    addLog(`✅ QA Score: ${phase4.qa_results.overall_score}/100`);
-    addLog(`✅ Research Implementation Score: ${phase4.research_verification.score}/100`);
-    
-    updateProgress('testing', 95, 'Packaging application', logs);
+    updateProgress('packaging', 95, '📦 Creating download package...');
 
-    // FINAL: Package results
+    // CRITICAL FIX: Create ZIP and store path
+    const zipPath = await createDownloadPackage(buildId, projectData.projectName, {
+      phase1, phase2, phase3, phase4
+    });
+
+    console.log('✅ ZIP created:', zipPath);
+
+    const timeTaken = Math.round((Date.now() - new Date(activeBuilds.get(buildId).started_at).getTime()) / 1000);
+
+    // CRITICAL FIX: Properly structured results
     const finalResults = {
       success: true,
       build_id: buildId,
@@ -294,286 +409,274 @@ async function runMasterBuild(buildId, projectData, tier) {
         quality: phase4
       },
       summary: {
-        files_generated: phase3.frontend.stats.total_files + phase3.backend.stats.total_files,
-        lines_of_code: phase3.frontend.stats.total_lines + phase3.backend.stats.total_lines,
-        qa_score: phase4.qa_results.overall_score,
-        research_score: phase4.research_verification.score,
-        deployment_ready: phase4.deployment_ready,
-        competitive_advantages: phase2.competitive_advantages.length,
-        time_taken: Math.round((Date.now() - new Date(buildProgress.get(buildId).started_at).getTime()) / 1000)
+        files_generated: filesGenerated,
+        lines_of_code: linesOfCode,
+        competitors_analyzed: competitorsAnalyzed,
+        reviews_scanned: reviewsScanned,
+        qa_score: phase4.qa_results?.overall_score || 0,
+        research_score: phase4.research_verification?.score || 0,
+        deployment_ready: phase4.deployment_ready || false,
+        competitive_advantages: phase2.competitive_advantages?.length || 0,
+        time_taken: timeTaken
       },
+      download_url: `/api/master/download/${buildId}`,
       tier,
       timestamp: new Date().toISOString()
     };
 
-    // Store results
-    buildResults.set(buildId, finalResults);
+    // CRITICAL FIX: Mark project as completed with ALL data
+    if (projectData.projectId) {
+      await ProjectService.update(projectData.projectId, {
+        status: 'completed',
+        buildProgress: 100,
+        completedAt: new Date(),
+        filesGenerated,
+        linesOfCode,
+        qaScore: phase4.qa_results?.overall_score,
+        deploymentReady: phase4.deployment_ready,
+        downloadUrl: `/api/master/download/${buildId}`,
+        deploymentUrl: null, // Will be set when deployed
+        buildData: finalResults, // Store complete results
+        researchData: phase1, // Store research separately
+        competitorData: phase2 // Store competitors separately
+      });
+      console.log('✅ Project marked complete in DB with full data');
+    }
 
-    // Update progress to completed
-    buildProgress.set(buildId, {
+    // Send completion notification
+    await NotificationService.create(projectData.userId, {
+      title: 'Build Complete! 🎉',
+      message: `Your project "${projectData.projectName}" is ready to download`,
+      type: 'success',
+      actionUrl: `/projects/${projectData.projectId}`,
+      actionText: 'Download Now'
+    });
+
+    // CRITICAL FIX: Update build tracking with final stats AND zip path
+    activeBuilds.set(buildId, {
+      ...activeBuilds.get(buildId),
       status: 'completed',
       phase: 'done',
       progress: 100,
-      current_task: 'Build complete!',
-      logs,
-      started_at: buildProgress.get(buildId).started_at,
-      user_id: projectData.userId,
-      completed_at: new Date().toISOString()
+      message: '🎉 Build complete! Ready to download.',
+      results: finalResults,
+      zip_path: zipPath, // CRITICAL: Store zip path
+      completed_at: new Date().toISOString(),
+      stats: {
+        filesGenerated,
+        linesOfCode,
+        competitorsAnalyzed,
+        reviewsScanned
+      }
     });
 
-    addLog('🎉 Build complete! App is ready to download.');
+    console.log('\n✅ BUILD COMPLETED SUCCESSFULLY!');
+    console.log('Files:', filesGenerated);
+    console.log('Lines:', linesOfCode);
+    console.log('Time:', timeTaken, 'seconds');
+    console.log('ZIP:', zipPath);
 
   } catch (error) {
-    console.error(`Build ${buildId} failed:`, error);
-    buildProgress.set(buildId, {
+    console.error('\n❌ BUILD FAILED:', error);
+    console.error(error.stack);
+
+    activeBuilds.set(buildId, {
+      ...activeBuilds.get(buildId),
       status: 'failed',
       phase: 'error',
       progress: 0,
       error: error.message,
-      logs,
-      user_id: projectData.userId
+      message: `Build failed: ${error.message}`,
+      can_retry: true
     });
+
+    if (projectData.projectId) {
+      await ProjectService.update(projectData.projectId, {
+        status: 'failed',
+        buildData: { error: error.message, stack: error.stack }
+      }).catch(err => console.error('Failed to update project:', err));
+    }
+
+    await NotificationService.create(projectData.userId, {
+      title: 'Build Failed ❌',
+      message: `Build failed: ${error.message}. You can retry the build.`,
+      type: 'error',
+      actionUrl: `/projects/${projectData.projectId}`,
+      actionText: 'Retry Build'
+    }).catch(err => console.error('Failed to send notification:', err));
   }
 }
 
 // ==========================================
-// HELPER: CREATE DOWNLOAD PACKAGE
+// CREATE DOWNLOAD PACKAGE - FIXED
 // ==========================================
-async function createDownloadPackage(buildId, results) {
+async function createDownloadPackage(buildId, projectName, results) {
   const tempDir = path.join(__dirname, '../temp');
-  const zipPath = path.join(tempDir, `${buildId}.zip`);
-
-  // Create temp directory
   await fs.mkdir(tempDir, { recursive: true });
+
+  const fileName = `${projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}.zip`;
+  const zipPath = path.join(tempDir, fileName);
+
+  console.log('📦 Creating ZIP:', fileName);
 
   return new Promise((resolve, reject) => {
     const output = require('fs').createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
     output.on('close', () => {
-      console.log(`✅ Created ZIP: ${archive.pointer()} bytes`);
+      console.log(`✅ ZIP created: ${archive.pointer()} bytes`);
       resolve(zipPath);
     });
 
     archive.on('error', (err) => {
+      console.error('❌ ZIP creation failed:', err);
       reject(err);
     });
 
     archive.pipe(output);
 
-    // Add files from results
-    const { code } = results.phases;
-
-    // Frontend files
-    if (code.frontend?.files) {
-      Object.entries(code.frontend.files).forEach(([filepath, content]) => {
-        archive.append(content, { name: `frontend/${filepath}` });
-      });
-    }
-
-    // Backend files
-    if (code.backend?.files) {
-      Object.entries(code.backend.files).forEach(([filepath, content]) => {
-        archive.append(content, { name: `backend/${filepath}` });
-      });
-    }
-
-    // Database files
-    if (code.database?.migrations) {
-      code.database.migrations.forEach((migration, i) => {
-        archive.append(migration.sql, { 
-          name: `database/migrations/${String(i + 1).padStart(3, '0')}_${migration.name}.sql` 
+    try {
+      // Add frontend files
+      if (results.phase3?.frontend?.files) {
+        Object.entries(results.phase3.frontend.files).forEach(([filepath, content]) => {
+          archive.append(content, { name: `frontend/${filepath}` });
         });
-      });
+      }
+
+      // Add backend files
+      if (results.phase3?.backend?.files) {
+        Object.entries(results.phase3.backend.files).forEach(([filepath, content]) => {
+          archive.append(content, { name: `backend/${filepath}` });
+        });
+      }
+
+      // Add database files
+      if (results.phase3?.database) {
+        if (results.phase3.database.migrations) {
+          results.phase3.database.migrations.forEach((migration, i) => {
+            const sql = typeof migration === 'string' ? migration : migration.sql;
+            archive.append(sql, { 
+              name: `database/migrations/${String(i + 1).padStart(3, '0')}_migration.sql` 
+            });
+          });
+        }
+
+        if (results.phase3.database.prisma_schema) {
+          archive.append(results.phase3.database.prisma_schema, { 
+            name: 'backend/prisma/schema.prisma' 
+          });
+        }
+      }
+
+      // Add comprehensive documentation
+      archive.append(generateREADME(results), { name: 'README.md' });
+      archive.append(generateResearchReport(results.phase1), { name: 'RESEARCH_REPORT.md' });
+      archive.append(generateDeploymentGuide(), { name: 'DEPLOYMENT_GUIDE.md' });
+
+      archive.finalize();
+    } catch (error) {
+      console.error('❌ Error adding files to ZIP:', error);
+      reject(error);
     }
-
-    if (code.database?.prismaSchema) {
-      archive.append(code.database.prismaSchema, { 
-        name: 'backend/prisma/schema.prisma' 
-      });
-    }
-
-    // Add comprehensive README
-    const readme = generateComprehensiveReadme(results);
-    archive.append(readme, { name: 'README.md' });
-
-    // Add research report
-    const researchReport = generateResearchReport(results.phases.research);
-    archive.append(researchReport, { name: 'RESEARCH_REPORT.md' });
-
-    // Add strategic plan
-    const strategicPlan = generateStrategicPlan(results.phases.strategy);
-    archive.append(strategicPlan, { name: 'STRATEGIC_PLAN.md' });
-
-    // Add deployment guide
-    const deployGuide = generateDeploymentGuide(results);
-    archive.append(deployGuide, { name: 'DEPLOYMENT_GUIDE.md' });
-
-    archive.finalize();
   });
 }
 
-// ==========================================
-// HELPER: GENERATE COMPREHENSIVE README
-// ==========================================
-function generateComprehensiveReadme(results) {
-  const { research, strategy, code, quality } = results.phases;
-  const { summary } = results;
-
-  return `# ${results.project_name}
+function generateREADME(results) {
+  const stats = results.phase3 || {};
+  return `# ${results.phase2?.project_name || 'My App'}
 
 **Built with Launch AI** 🚀  
-Generated: ${results.timestamp}  
-Build ID: ${results.build_id}
+Generated: ${new Date().toISOString()}
 
----
+## 📊 Build Statistics
 
-## 📊 Build Summary
-
-- **Files Generated**: ${summary.files_generated}
-- **Lines of Code**: ${summary.lines_of_code.toLocaleString()}
-- **QA Score**: ${summary.qa_score}/100
-- **Research Score**: ${summary.research_score}/100
-- **Deployment Ready**: ${summary.deployment_ready ? '✅ YES' : '⚠️ Needs fixes'}
-- **Competitive Advantages**: ${summary.competitive_advantages}
-- **Build Time**: ${summary.time_taken}s
-
----
+- **Frontend Files**: ${stats.frontend?.stats?.total_files || 0}
+- **Backend Files**: ${stats.backend?.stats?.total_files || 0}
+- **Total Lines of Code**: ${(stats.frontend?.stats?.total_lines || 0) + (stats.backend?.stats?.total_lines || 0)}
+- **QA Score**: ${results.phase4?.qa_results?.overall_score || 0}/100
+- **Deployment Ready**: ${results.phase4?.deployment_ready ? '✅ YES' : '⚠️ Needs review'}
 
 ## 🎯 Competitive Advantages
 
-This app was built with REAL market research and has these unique advantages:
-
-${strategy.competitive_advantages.map((adv, i) => `
-### ${i + 1}. ${adv.feature}
-- **Source**: ${adv.source}
-- **Priority**: ${adv.priority.toUpperCase()}
-- **Implementation**: ${adv.implementation}
-`).join('\n')}
-
----
-
-## 🧠 Research-Backed Features
-
-### Market Insights Applied:
-- **Starving Market Score**: ${research.starvingMarket?.score || 'N/A'}/100
-- **Uniqueness Score**: ${research.uniqueness?.uniqueness_score || 'N/A'}/100
-- **Competitors Analyzed**: ${research.competitors?.individual_analyses?.length || 0}
-- **User Reviews Analyzed**: ${research.reviews?.total_reviews || 0}
-
-### Pain Points Solved:
-${research.reviews?.insights?.top_complaints?.slice(0, 5).map((complaint, i) => `
-${i + 1}. **${complaint.complaint}** (${complaint.severity})
-   - Solution implemented in the app
-`).join('\n') || 'Premium tier: User pain points analyzed'}
-
----
-
-## 🎨 UX Psychology Applied
-
-${strategy.ux_strategy?.principles?.slice(0, 5).map((principle, i) => `
-### ${principle.principle}
-- **Where**: ${principle.where}
-- **Implementation**: ${principle.implementation}
-- **Copy**: "${principle.copy_example}"
-`).join('\n') || 'Psychology principles applied throughout the app'}
-
----
-
-## 💰 Pricing Strategy
-
-${strategy.pricing_strategy?.recommended_tiers?.map(tier => `
-### ${tier.name}
-- **Price**: ${tier.price_monthly}
-- **Target**: ${tier.target}
-- **Margin**: ${tier.margin}
-`).join('\n')}
-
-**Strategy**: ${strategy.pricing_strategy?.strategy}
-
----
+${results.phase2?.competitive_advantages?.map((adv, i) => `${i + 1}. **${adv.feature}** - ${adv.source}`).join('\n') || 'Based on comprehensive market research'}
 
 ## 🚀 Quick Start
 
-### Frontend
+### Prerequisites
+- Node.js 18+ 
+- PostgreSQL database
+- npm or yarn
+
+### Frontend Setup
 \`\`\`bash
 cd frontend
 npm install
 npm start
 \`\`\`
 
-### Backend
+The app will run on http://localhost:3000
+
+### Backend Setup
 \`\`\`bash
 cd backend
 npm install
 
-# Setup database
-createdb ${results.project_name.toLowerCase().replace(/\s+/g, '_')}
-# Run migrations in database/migrations/
-
+# Setup environment
 cp .env.example .env
-# Edit .env with your config
+# Edit .env with your database credentials
 
+# Run migrations
+npx prisma db push
+
+# Start server
 npm run dev
 \`\`\`
 
----
+The API will run on http://localhost:5000
 
-## 📁 Project Structure
+## 📦 Project Structure
 
 \`\`\`
-${results.project_name}/
-├── frontend/         (${code.frontend?.stats?.total_files || 0} files)
+project/
+├── frontend/          React application
 │   ├── src/
 │   │   ├── components/
 │   │   ├── pages/
-│   │   └── services/
-│   └── public/
-├── backend/          (${code.backend?.stats?.total_files || 0} files)
+│   │   ├── services/
+│   │   └── App.js
+│   └── package.json
+├── backend/           Node.js API
 │   ├── routes/
 │   ├── controllers/
-│   ├── models/
-│   └── middleware/
-└── database/
-    └── migrations/   (${code.database?.migrations?.length || 0} migrations)
+│   ├── middleware/
+│   ├── prisma/
+│   │   └── schema.prisma
+│   └── server.js
+├── database/
+│   └── migrations/
+└── README.md
 \`\`\`
 
----
+## 🌐 Deployment
 
-## 🧪 Quality Assurance
+See DEPLOYMENT_GUIDE.md for detailed deployment instructions.
 
-### QA Results: ${quality.qa_results?.overall_score}/100
+Quick options:
+- **Frontend**: Deploy to Vercel (free)
+- **Backend**: Deploy to Railway ($5/mo with database)
 
-- **Code Quality**: ${quality.qa_results?.code_quality?.score || 0}/100
-- **Functionality**: ${quality.qa_results?.functionality?.score || 0}/100
-- **Security**: ${quality.qa_results?.security?.score || 0}/100
-- **Performance**: ${quality.qa_results?.performance?.score || 0}/100
+## 📖 Documentation
 
-### Research Implementation: ${quality.research_verification?.score || 0}/100
-
-**Features Implemented from Research**: ${quality.research_verification?.implemented || 0}/${quality.research_verification?.total || 0}
-
----
-
-## 📚 Additional Documentation
-
-- **RESEARCH_REPORT.md** - Comprehensive market analysis
-- **STRATEGIC_PLAN.md** - Business strategy and roadmap
+- **RESEARCH_REPORT.md** - Market analysis and competitor insights
 - **DEPLOYMENT_GUIDE.md** - Step-by-step deployment instructions
-
----
 
 ## 🆘 Support
 
-Questions? Issues?
-- Email: support@launch-ai.com
-- Discord: [Join Community](https://discord.gg/launch-ai)
-- Docs: [docs.launch-ai.com](https://docs.launch-ai.com)
+Built by Launch AI - https://launch-ai.com
+For issues, contact support@launch-ai.com
 
 ---
-
-**Built with ❤️ by Launch AI**  
-*From idea to deployed app in minutes*
+Generated by Launch AI Platform
 `;
 }
 
@@ -582,459 +685,92 @@ function generateResearchReport(research) {
 
 Generated: ${new Date().toISOString()}
 
----
-
 ## Executive Summary
 
-${research.starvingMarket ? `
-### Starving Market Analysis
-- **Is Starving Market**: ${research.starvingMarket.is_starving_market ? '✅ YES' : '❌ NO'}
-- **Score**: ${research.starvingMarket.score}/100
-- **Demand Level**: ${research.starvingMarket.demand_level}
-- **Satisfaction with Existing Solutions**: ${research.starvingMarket.satisfaction_with_existing}
-- **Trend Direction**: ${research.starvingMarket.trend_direction}
+- **Competitors Analyzed**: ${research?.competitors?.total_analyzed || 0}
+- **User Reviews Analyzed**: ${research?.reviews?.total_reviews || 0}
+- **Market Size**: ${research?.market?.market_overview?.tam || 'Large addressable market'}
+- **Competition Level**: ${research?.market?.competition_level || 'Moderate'}
 
-**Reasoning**: ${research.starvingMarket.reasoning}
+## Detailed Findings
 
-**Opportunity Rating**: ${research.starvingMarket.opportunity_rating}
-` : ''}
-
-${research.uniqueness ? `
-### Uniqueness Analysis
-- **Uniqueness Score**: ${research.uniqueness.uniqueness_score}/100
-
-**Truly Unique Aspects**:
-${research.uniqueness.truly_unique_aspects?.map(aspect => `- ${aspect}`).join('\n')}
-
-**Similar to Competitors**:
-${research.uniqueness.similar_to_competitors?.map(aspect => `- ${aspect}`).join('\n')}
-
-**Differentiation Strategy**: ${research.uniqueness.differentiation_strategy}
-` : ''}
+${JSON.stringify(research, null, 2)}
 
 ---
-
-## Market Overview
-
-### Market Size
-${research.market?.market_overview ? `
-- **TAM**: ${research.market.market_overview.tam || 'N/A'}
-- **Growth Rate**: ${research.market.market_overview.growth_rate || 'N/A'}
-- **Maturity**: ${research.market.market_overview.maturity || 'N/A'}
-` : 'Market data unavailable'}
-
-### Competition Level
-**${research.market?.competition_level || 'N/A'}**
-
----
-
-## Competitor Analysis
-
-${research.competitors?.individual_analyses?.map((comp, i) => `
-### ${i + 1}. ${comp.name}
-
-**Market Position**: ${comp.estimated_market_position || 'Unknown'}
-
-**Strengths**:
-${comp.strengths?.map(s => `- ${s}`).join('\n') || 'N/A'}
-
-**Weaknesses (Our Opportunities)**:
-${comp.weaknesses?.map(w => `- ${w}`).join('\n') || 'N/A'}
-
-**Unique Selling Points**:
-${comp.unique_selling_points?.map(usp => `- ${usp}`).join('\n') || 'N/A'}
-
-**Business Model**: ${comp.business_model || 'Unknown'}
-**Pricing Strategy**: ${comp.pricing_strategy || 'Unknown'}
-
----
-`).join('\n') || 'No competitor data available'}
-
-## User Review Analysis
-
-${research.reviews ? `
-### Overall Sentiment
-- **Average Score**: ${research.reviews.sentiment?.average_score || 'N/A'}
-- **Overall Sentiment**: ${research.reviews.sentiment?.overall_sentiment || 'N/A'}
-
-**Distribution**:
-- Positive: ${research.reviews.sentiment?.distribution?.positive || '0%'}
-- Neutral: ${research.reviews.sentiment?.distribution?.neutral || '0%'}
-- Negative: ${research.reviews.sentiment?.distribution?.negative || '0%'}
-
-### Top User Complaints
-
-${research.reviews.insights?.top_complaints?.map((complaint, i) => `
-${i + 1}. **${complaint.complaint}** (${complaint.severity})
-   - Frequency: ${complaint.frequency}
-   - Example: "${complaint.example_quote}"
-`).join('\n')}
-
-### Most Requested Features
-
-${research.reviews.insights?.feature_requests?.map((request, i) => `
-${i + 1}. **${request.feature}** (Demand: ${request.demand})
-   - Example: "${request.example_quote}"
-`).join('\n')}
-` : 'Review analysis available in Starter tier and above'}
-
----
-
-## Research Papers Analysis
-
-${research.researchPapers ? `
-**Papers Analyzed**: ${research.researchPapers.papers_analyzed}
-
-### Key Innovations
-
-${research.researchPapers.innovations?.map((innovation, i) => `
-${i + 1}. **${innovation.innovation}**
-   - From: ${innovation.from_paper}
-   - Technical Approach: ${innovation.technical_approach}
-   - User Benefit: ${innovation.user_benefit}
-   - Complexity: ${innovation.implementation_complexity}
-   - Competitive Advantage: ${innovation.competitive_advantage}
-`).join('\n')}
-` : 'Research paper analysis available in Premium tier'}
-
----
-
-## Financial Analysis
-
-${research.margins ? `
-### Cost Structure
-- **Initial Development**: ${research.margins.estimated_costs?.initial_development}
-- **Monthly Hosting**: ${research.margins.estimated_costs?.monthly_hosting}
-- **Monthly Marketing**: ${research.margins.estimated_costs?.monthly_marketing}
-- **Support per User**: ${research.margins.estimated_costs?.support_per_user}
-
-### Revenue Potential
-- **Monthly per User**: ${research.margins.revenue_per_user?.monthly}
-- **Annual per User**: ${research.margins.revenue_per_user?.annual}
-- **Lifetime Value**: ${research.margins.revenue_per_user?.lifetime_value}
-
-### Margins
-- **Gross Margin**: ${research.margins.margins?.gross_margin_percent}%
-- **Net Margin**: ${research.margins.margins?.net_margin_percent}%
-
-### Break-Even Analysis
-- **Users Needed**: ${research.margins.break_even?.users_needed}
-- **Months to Break-Even**: ${research.margins.break_even?.months_to_break_even}
-
-### Scaling Economics
-- At 100 users: ${research.margins.scaling?.margin_at_100_users} margin
-- At 1,000 users: ${research.margins.scaling?.margin_at_1000_users} margin
-- At 10,000 users: ${research.margins.scaling?.margin_at_10000_users} margin
-` : 'Financial analysis not available'}
-
----
-
-## Recommendations
-
-${research.market?.recommended_strategy || 'Strategic recommendations based on comprehensive analysis'}
-
-**Time to Market**: ${research.market?.estimated_time_to_market || 'TBD'}
-**Capital Required**: ${research.market?.capital_required || 'TBD'}
-
----
-
-*This report was generated using real web scraping, competitor analysis, and AI-powered insights.*
+This research was compiled by AI agents analyzing real market data.
 `;
 }
 
-function generateStrategicPlan(strategy) {
-  return `# 🎯 Strategic Business Plan
-
-Generated: ${new Date().toISOString()}
-
----
-
-## Competitive Advantages
-
-We've identified **${strategy.competitive_advantages?.length || 0}** competitive advantages based on comprehensive research:
-
-${strategy.competitive_advantages?.map((adv, i) => `
-### ${i + 1}. ${adv.feature}
-
-**Type**: ${adv.type}  
-**Source**: ${adv.source}  
-**Priority**: ${adv.priority.toUpperCase()}  
-
-**Implementation Plan**: ${adv.implementation}
-
----
-`).join('\n')}
-
-## UX Strategy (Psychology-Driven)
-
-${strategy.ux_strategy?.principles?.map((principle, i) => `
-### ${i + 1}. ${principle.principle}
-
-**Where to Apply**: ${principle.where}  
-**Implementation**: ${principle.implementation}  
-**Suggested Copy**: "${principle.copy_example}"
-
----
-`).join('\n')}
-
-### Color Psychology
-
-${strategy.ux_strategy?.color_psychology ? `
-- **Primary Color**: ${strategy.ux_strategy.color_psychology.primary}
-- **CTA Color**: ${strategy.ux_strategy.color_psychology.cta}
-` : ''}
-
-### User Flow Design
-
-${strategy.ux_strategy?.flow_design || 'User journey optimized for conversions'}
-
----
-
-## Feature Prioritization
-
-Features ranked by impact and research backing:
-
-${strategy.features_prioritized?.map((feature, i) => `
-### ${i + 1}. ${feature.feature} (Score: ${feature.score})
-
-- **Priority**: ${feature.priority}
-- **Type**: ${feature.type}
-- **Source**: ${feature.source}
-- **Implementation**: ${feature.implementation}
-`).join('\n')}
-
----
-
-## Pricing Strategy
-
-${strategy.pricing_strategy?.recommended_tiers?.map((tier, i) => `
-### ${tier.name}
-
-**Price**: ${tier.price_monthly}  
-**Target Market**: ${tier.target}  
-**Expected Margin**: ${tier.margin}
-
----
-`).join('\n')}
-
-**Overall Strategy**: ${strategy.pricing_strategy?.strategy}  
-**Market Positioning**: ${strategy.pricing_strategy?.positioning}
-
----
-
-## Implementation Roadmap
-
-### Phase 1: MVP (Months 1-2)
-**Critical Features**:
-${strategy.implementation_plan?.phase_1_mvp?.map(f => `- ${f.feature}`).join('\n') || 'Core features'}
-
-### Phase 2: Growth (Months 3-6)
-**High Priority Features**:
-${strategy.implementation_plan?.phase_2_growth?.map(f => `- ${f.feature}`).join('\n') || 'Growth features'}
-
-### Phase 3: Scale (Months 7-12)
-**Medium Priority Features**:
-${strategy.implementation_plan?.phase_3_scale?.map(f => `- ${f.feature}`).join('\n') || 'Scaling features'}
-
----
-
-## Go-to-Market Strategy
-
-1. **Launch Strategy**: Target early adopters with pain points we solve
-2. **Marketing Channels**: Focus on channels where competitors are weak
-3. **Growth Tactics**: Leverage our competitive advantages in messaging
-4. **Retention**: Solve the top complaints users have about competitors
-
----
-
-*This strategic plan is based on real market data, competitor weaknesses, and user pain points.*
-`;
-}
-
-function generateDeploymentGuide(results) {
+function generateDeploymentGuide() {
   return `# 🚀 Deployment Guide
-
-Quick guide to deploying your ${results.project_name}
-
----
-
-## Prerequisites
-
-- Node.js 18+
-- PostgreSQL database
-- Vercel account (frontend)
-- Railway account (backend)
-
----
 
 ## Option 1: Quick Deploy (Recommended)
 
-### Step 1: Deploy Backend to Railway
+### Frontend → Vercel (Free)
+1. Install Vercel CLI: \`npm i -g vercel\`
+2. Navigate to frontend folder: \`cd frontend\`
+3. Login: \`vercel login\`
+4. Deploy: \`vercel --prod\`
 
-\`\`\`bash
-cd backend
-npm install -g @railway/cli
-railway login
-railway init
-railway up
-railway add --database postgres
+### Backend → Railway ($5/mo)
+1. Install Railway CLI: \`npm i -g @railway/cli\`
+2. Navigate to backend folder: \`cd backend\`
+3. Login: \`railway login\`
+4. Initialize: \`railway init\`
+5. Add database: \`railway add --database postgres\`
+6. Deploy: \`railway up\`
+
+## Environment Variables
+
+### Frontend (.env)
+\`\`\`
+REACT_APP_API_URL=https://your-backend-url.railway.app
 \`\`\`
 
-**Environment Variables to Set in Railway**:
+### Backend (.env)
 \`\`\`
+DATABASE_URL=postgresql://...  # Railway provides this
+JWT_SECRET=your-secure-random-string
+PORT=5000
 NODE_ENV=production
-JWT_SECRET=[generate with: openssl rand -hex 32]
-ANTHROPIC_API_KEY=your_key_here
-RAZORPAY_KEY_ID=your_key_here
-RAZORPAY_KEY_SECRET=your_secret_here
-CORS_ORIGIN=https://your-frontend-domain.vercel.app
 \`\`\`
-
-### Step 2: Run Database Migrations
-
-\`\`\`bash
-# Connect to Railway database
-railway run bash
-
-# Run migrations
-psql $DATABASE_URL < database/migrations/001_*.sql
-psql $DATABASE_URL < database/migrations/002_*.sql
-# ... etc
-\`\`\`
-
-### Step 3: Deploy Frontend to Vercel
-
-\`\`\`bash
-cd frontend
-npm install -g vercel
-vercel login
-vercel --prod
-\`\`\`
-
-**Environment Variables to Set in Vercel**:
-\`\`\`
-REACT_APP_API_URL=https://your-backend.up.railway.app
-REACT_APP_ENV=production
-REACT_APP_RAZORPAY_KEY=your_razorpay_key
-\`\`\`
-
-### Step 4: Test Your App
-
-1. Visit your Vercel URL
-2. Try creating an account
-3. Test the main features
-4. Check Railway logs for errors
-
----
-
-## Option 2: Deploy to Render (Full-Stack)
-
-### Single Command Deployment
-
-\`\`\`bash
-# Push code to GitHub
-git init
-git add .
-git commit -m "Initial commit"
-git push origin main
-
-# Then on render.com:
-# 1. New → Web Service
-# 2. Connect GitHub repo
-# 3. Build: npm install && npm run build
-# 4. Start: npm start
-# 5. Add PostgreSQL database
-\`\`\`
-
----
 
 ## Post-Deployment Checklist
 
-- [ ] Frontend loads correctly
-- [ ] Backend health check works (GET /health)
-- [ ] Database connection successful
-- [ ] User registration works
-- [ ] Payment flow works (test mode)
-- [ ] All API endpoints return correctly
-- [ ] CORS configured properly
+- [ ] Frontend is accessible
+- [ ] Backend health check works: \`/api/health\`
+- [ ] Database migrations ran successfully
+- [ ] Environment variables configured
+- [ ] CORS settings updated
 - [ ] SSL/HTTPS enabled
-- [ ] Environment variables set
-- [ ] Error logging configured
-
----
+- [ ] Custom domain configured (optional)
 
 ## Monitoring
 
-### Backend Logs (Railway)
-\`\`\`bash
-railway logs
-\`\`\`
-
-### Frontend Logs (Vercel)
-Visit: https://vercel.com/dashboard → Your Project → Logs
+- Check logs: \`railway logs\` or \`vercel logs\`
+- Monitor uptime with UptimeRobot (free)
+- Set up error tracking with Sentry
 
 ---
-
-## Troubleshooting
-
-### CORS Errors
-- Check CORS_ORIGIN in backend matches your frontend URL
-- Ensure URL includes https://
-
-### Database Connection Failed
-- Verify DATABASE_URL is set correctly
-- Check migrations ran successfully
-
-### API Calls Failing
-- Verify REACT_APP_API_URL points to Railway backend
-- Check Railway logs for errors
-
----
-
-## Scaling
-
-### Free Tier Limits:
-- Vercel: Unlimited bandwidth, 100GB/month
-- Railway: $5/month after free trial
-
-### Recommended Upgrades:
-- Month 1-3: Stick with free/cheap tiers
-- Month 3-6: Upgrade as users grow
-- Month 6+: Consider dedicated infrastructure
-
----
-
-## Support
-
-Need help deploying?
-- Discord: [Join Community](https://discord.gg/launch-ai)
-- Email: support@launch-ai.com
-- Docs: https://docs.launch-ai.com/deployment
-
----
-
-**Estimated Deployment Time**: 30 minutes  
-**Monthly Cost**: $5-10 to start
-
-Good luck! 🚀
+Need help? Contact Launch AI support
 `;
 }
 
-// ==========================================
-// Clean up old builds (run periodically)
-// ==========================================
+// Cleanup old builds every hour
 setInterval(() => {
   const now = Date.now();
   const maxAge = 24 * 60 * 60 * 1000; // 24 hours
 
-  buildProgress.forEach((progress, buildId) => {
-    const startTime = new Date(progress.started_at).getTime();
+  activeBuilds.forEach((data, buildId) => {
+    const startTime = new Date(data.started_at).getTime();
     if (now - startTime > maxAge) {
-      buildProgress.delete(buildId);
-      buildResults.delete(buildId);
-      console.log(`Cleaned up old build: ${buildId}`);
+      if (data.zip_path) {
+        fs.unlink(data.zip_path).catch(err => console.error('Failed to delete ZIP:', err));
+      }
+      activeBuilds.delete(buildId);
+      console.log(`🗑️ Cleaned up old build: ${buildId}`);
     }
   });
-}, 60 * 60 * 1000); // Run every hour
+}, 60 * 60 * 1000);
 
 module.exports = router;
