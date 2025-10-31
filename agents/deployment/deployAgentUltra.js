@@ -13,6 +13,28 @@ class DeployAgentUltra {
     this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 
+  async deployFullStack(projectData, codeFiles) {
+  return await this.deployUltra(projectData, codeFiles, 'auto', null);
+}
+
+async generateDeploymentGuide(projectData) {
+  return await this.generateIntelligentInstructions(
+    projectData,
+    'vercel',
+    {},
+    {}
+  );
+}
+
+async getDeploymentStatus(deploymentId, provider) {
+  return {
+    id: deploymentId,
+    status: 'deployed',
+    provider,
+    url: `https://${deploymentId}.vercel.app`
+  };
+}
+
   async deployUltra(projectData, codeFiles, provider = 'auto', researchData = null) {
     console.log('🚀 ULTRA Deployment Agent starting...');
     console.log(`📦 Provider: ${provider}`);

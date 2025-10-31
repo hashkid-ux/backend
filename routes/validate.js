@@ -34,7 +34,7 @@ router.post('/idea', checkTier, async (req, res) => {
     console.log(`📊 Validating idea for ${req.userTier} tier user...`);
 
     // Run validation
-    const validation = await agent.validateIdea(idea, targetMarket, budget || 'Not specified');
+    const validation = await agent.validateIdeaUltra(idea, targetMarket, budget || 'Not specified', null);
 
     // Track usage (TODO: implement proper usage tracking)
     console.log(`✅ Validation completed for: ${idea.substring(0, 50)}...`);
