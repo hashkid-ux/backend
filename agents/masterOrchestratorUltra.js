@@ -3,15 +3,15 @@
 
 const AIClient = require('../services/aiClient');
 const MarketIntelligenceAgentUltra = require('./research/marketIntelligenceUltra');
-const CompetitorAnalysisAgentUltra = require('./research/competitorAnalysis');
-const ReviewAnalysisAgentUltra = require('./research/reviewAnalysis');
-const ResearchPaperAgentUltra = require('./research/researchPaperAgent');
+const CompetitorAnalysisAgentUltra = require('./research/competitorAnalysisUltra');
+const ReviewAnalysisAgentUltra = require('./research/reviewAnalysisUltra');
+const ResearchPaperAgentUltra = require('./research/researchPaperAgentUltra');
 const TrendAnalysisAgent = require('./research/trendAnalysisAgent');
 const PsychologyAgentUltra = require('./strategy/psychologyAgentUltra');
-const FrontendAgentUltra = require('./codegen/frontendAgent');
-const BackendAgentUltra = require('./codegen/backendAgent');
-const DatabaseAgentUltra = require('./codegen/databaseAgent');
-const QAAgentUltra = require('./testing/qaAgent');
+const FrontendAgentUltra = require('./codegen/frontendAgentUltra');
+const BackendAgentUltra = require('./codegen/backendAgentUltra');
+const DatabaseAgentUltra = require('./codegen/databaseAgentUltra');
+const QAAgentUltra = require('./testing/qaAgentUltra');
 const PostDeploymentMonitor = require('./monitoring/postDeploymentMonitor');
 
 class MasterOrchestrator {
