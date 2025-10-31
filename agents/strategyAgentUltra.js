@@ -7,7 +7,7 @@ class StrategyAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'google/gemini-2.0-flash-exp:free';
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 
   async validateIdeaUltra(ideaDescription, targetMarket, budget, researchData = null) {

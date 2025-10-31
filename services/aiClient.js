@@ -4,7 +4,7 @@ class AIClient {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY;
     this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'google/gemini-2.0-flash-exp:free';
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
     
     // Rate limit tracking
     this.lastRequestTime = 0;

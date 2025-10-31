@@ -10,7 +10,7 @@ class DeployAgentUltra {
     this.tier = tier;
     this.projectId = projectId;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'google/gemini-2.0-flash-exp:free';
+    this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 
   async deployFullStack(projectData, codeFiles) {
