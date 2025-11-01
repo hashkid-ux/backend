@@ -1,5 +1,5 @@
 // agents/research/webScraperUltra.js
-// ULTRA Web Scraper - FIXED VERSION with working Google Search
+// BULLETPROOF Web Scraper - Enhanced Google Search + Better Error Handling
 
 const { chromium } = require('playwright');
 const cheerio = require('cheerio');
@@ -12,11 +12,10 @@ class WebScraperUltra {
   constructor() {
     this.browser = null;
     this.browserReady = false;
-    this.maxRetries = 3;
+    this.maxRetries = 2; // Reduced retries to prevent cascading failures
     this.userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ];
   }
 
@@ -34,7 +33,8 @@ class WebScraperUltra {
           '--disable-accelerated-2d-canvas',
           '--disable-gpu',
           '--window-size=1920,1080',
-          '--disable-blink-features=AutomationControlled'
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process'
         ]
       });
       this.browserReady = true;
@@ -49,10 +49,14 @@ class WebScraperUltra {
 
   async closeBrowser() {
     if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.browserReady = false;
-      console.log('🔌 Browser closed');
+      try {
+        await this.browser.close();
+        this.browser = null;
+        this.browserReady = false;
+        console.log('🔌 Browser closed');
+      } catch (error) {
+        console.error('⚠️ Browser close error:', error.message);
+      }
     }
   }
 
@@ -60,7 +64,7 @@ class WebScraperUltra {
     return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
   }
 
-  // ULTRA SCRAPING WITH MULTIPLE FALLBACKS
+  // ENHANCED: Scraping with better fallbacks
   async scrapePage(url, options = {}) {
     const cacheKey = `page_${url}`;
     const cached = cache.get(cacheKey);
@@ -71,32 +75,39 @@ class WebScraperUltra {
 
     console.log(`🌐 Scraping: ${url}`);
 
-    // Try methods in order: Browser -> Axios -> Fallback
-    const methods = [
-      () => this.scrapeWithBrowser(url, options),
-      () => this.scrapeWithAxios(url, options),
-      () => this.scrapeFallback(url, options)
-    ];
-
-    for (let i = 0; i < methods.length; i++) {
-      try {
-        const result = await methods[i]();
-        if (result && !result.error) {
-          cache.set(cacheKey, result);
-          return result;
-        }
-      } catch (error) {
-        console.warn(`⚠️ Method ${i + 1} failed: ${error.message}`);
-        if (i === methods.length - 1) {
-          return { error: 'All scraping methods failed', url };
-        }
+    // Try browser method (best results)
+    try {
+      const result = await this.scrapeWithBrowser(url, options);
+      if (result && !result.error) {
+        cache.set(cacheKey, result);
+        return result;
       }
+    } catch (error) {
+      console.warn(`⚠️ Browser method failed: ${error.message}`);
     }
 
-    return { error: 'Scraping failed', url };
+    // Fallback to Axios (faster, simpler)
+    try {
+      const result = await this.scrapeWithAxios(url, options);
+      if (result && !result.error) {
+        cache.set(cacheKey, result);
+        return result;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Axios method failed: ${error.message}`);
+    }
+
+    // Final fallback
+    return { 
+      error: 'All scraping methods failed', 
+      url,
+      text: '',
+      title: '',
+      links: [],
+      method: 'failed'
+    };
   }
 
-  // METHOD 1: Browser-based (most powerful)
   async scrapeWithBrowser(url, options) {
     const browser = await this.initBrowser();
     if (!browser) throw new Error('Browser not available');
@@ -112,11 +123,11 @@ class WebScraperUltra {
     try {
       await page.goto(url, {
         waitUntil: options.waitUntil || 'domcontentloaded',
-        timeout: options.timeout || 30000
+        timeout: options.timeout || 20000 // Reduced from 30s
       });
 
-      // Wait for dynamic content
-      await page.waitForTimeout(2000);
+      // Wait briefly for dynamic content
+      await page.waitForTimeout(1500);
 
       const html = await page.content();
       const $ = cheerio.load(html);
@@ -125,12 +136,10 @@ class WebScraperUltra {
         url,
         title: $('title').text().trim(),
         metaDescription: $('meta[name="description"]').attr('content') || '',
-        metaKeywords: $('meta[name="keywords"]').attr('content') || '',
         headings: this.extractHeadings($),
         links: this.extractLinks($, url),
         images: this.extractImages($, url),
         text: this.extractText($),
-        structured: this.extractStructuredData($),
         social: this.extractSocialLinks($),
         contactInfo: this.extractContactInfo($),
         pricing: this.extractPricing($),
@@ -147,16 +156,14 @@ class WebScraperUltra {
     }
   }
 
-  // METHOD 2: Axios (fast, lightweight)
   async scrapeWithAxios(url, options) {
     const response = await axios.get(url, {
       headers: {
         'User-Agent': this.getRandomUserAgent(),
         'Accept': 'text/html,application/xhtml+xml,application/xml',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br'
+        'Accept-Language': 'en-US,en;q=0.9'
       },
-      timeout: options.timeout || 15000,
+      timeout: options.timeout || 10000,
       maxRedirects: 5
     });
 
@@ -176,29 +183,7 @@ class WebScraperUltra {
     };
   }
 
-  // METHOD 3: Minimal fallback
-  async scrapeFallback(url, options) {
-    console.log(`📡 Using minimal fallback for: ${url}`);
-    
-    try {
-      const response = await axios.get(url, {
-        headers: { 'User-Agent': this.getRandomUserAgent() },
-        timeout: 10000
-      });
-
-      return {
-        url,
-        title: 'Scraped via fallback',
-        text: response.data.substring(0, 5000),
-        method: 'fallback',
-        scrapedAt: new Date().toISOString()
-      };
-    } catch (error) {
-      throw new Error(`Fallback failed: ${error.message}`);
-    }
-  }
-
-  // GOOGLE SEARCH WITH REAL RESULTS - FIXED VERSION
+  // BULLETPROOF: Google Search with multiple fallback strategies
   async searchGoogle(query, numResults = 10) {
     const cacheKey = `google_${query}_${numResults}`;
     const cached = cache.get(cacheKey);
@@ -209,31 +194,35 @@ class WebScraperUltra {
 
     console.log(`🔍 Google search: "${query}"`);
 
-    // Try browser-based search first
+    // STRATEGY 1: Try browser-based search (most reliable)
     try {
       const results = await this.searchGoogleWithBrowser(query, numResults);
       if (results.length > 0) {
+        console.log(`✅ Browser search succeeded: ${results.length} results`);
         cache.set(cacheKey, results);
         return results;
       }
     } catch (error) {
-      console.warn('Browser search failed, trying alternatives:', error.message);
+      console.warn(`⚠️ Browser search failed: ${error.message.substring(0, 100)}`);
     }
 
-    // Fallback to DuckDuckGo
+    // STRATEGY 2: DuckDuckGo fallback (more reliable than Google)
     try {
       const results = await this.searchDuckDuckGo(query, numResults);
       if (results.length > 0) {
+        console.log(`✅ DuckDuckGo succeeded: ${results.length} results`);
         cache.set(cacheKey, results);
         return results;
       }
     } catch (error) {
-      console.warn('DuckDuckGo search failed:', error.message);
+      console.warn(`⚠️ DuckDuckGo failed: ${error.message.substring(0, 100)}`);
     }
 
-    // Return synthetic results as last resort
-    console.warn(`⚠️ All search methods failed for: ${query}`);
-    return this.generateSyntheticResults(query, numResults);
+    // STRATEGY 3: Generate synthetic but useful results
+    console.warn(`⚠️ All search methods failed, generating synthetic results`);
+    const syntheticResults = this.generateSmartSyntheticResults(query, numResults);
+    cache.set(cacheKey, syntheticResults);
+    return syntheticResults;
   }
 
   async searchGoogleWithBrowser(query, numResults) {
@@ -250,61 +239,65 @@ class WebScraperUltra {
     const page = await context.newPage();
 
     try {
-      // Use Google search with specific parameters
+      // More reliable Google search URL
       const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${numResults}&hl=en`;
       
       await page.goto(searchUrl, { 
-        waitUntil: 'networkidle', 
-        timeout: 30000 
+        waitUntil: 'domcontentloaded',
+        timeout: 15000 // Reduced timeout
       });
 
-      await page.waitForTimeout(3000); // Wait for results to load
+      // Wait for results
+      await page.waitForTimeout(2000);
 
       const html = await page.content();
       await context.close();
 
-      // Parse results
+      // Parse results with ENHANCED selectors
       const $ = cheerio.load(html);
       const results = [];
 
-      // Try multiple selectors for different Google layouts
+      // Multiple selector strategies for different Google layouts
       const selectors = [
-        'div.g',
-        'div[data-sokoban-container]',
-        '.tF2Cxc',
-        'div.Gx5Zad',
-        'div.yuRUbf'
+        'div.g',           // Standard desktop
+        'div[data-sokoban-container]', // New layout
+        '.tF2Cxc',         // Alternative
+        'div.Gx5Zad'       // Mobile-like
       ];
 
       for (const selector of selectors) {
+        if (results.length >= numResults) break;
+
         $(selector).each((i, elem) => {
           if (results.length >= numResults) return false;
 
           const $elem = $(elem);
           
-          // Extract title
+          // Extract title (multiple possible locations)
           const title = $elem.find('h3').first().text().trim() || 
-                       $elem.find('.LC20lb').first().text().trim();
+                       $elem.find('.LC20lb').first().text().trim() ||
+                       $elem.find('[role="heading"]').first().text().trim();
           
-          // Extract URL
+          // Extract URL (handle Google's URL redirects)
           let url = $elem.find('a').first().attr('href');
           
-          // Extract snippet
-          const snippet = $elem.find('.VwiC3b').first().text().trim() || 
-                         $elem.find('.s').first().text().trim() ||
-                         $elem.find('.yXK7lf').first().text().trim();
-
-          if (title && url) {
-            // Clean URL
+          if (url) {
+            // Clean Google redirect URLs
             if (url.startsWith('/url?q=')) {
-              url = url.split('/url?q=')[1].split('&')[0];
+              url = decodeURIComponent(url.split('/url?q=')[1].split('&')[0]);
             }
-            url = decodeURIComponent(url);
+            
+            // Extract snippet
+            const snippet = $elem.find('.VwiC3b, .yXK7lf, .s, [data-sncf="1"]')
+              .first()
+              .text()
+              .trim()
+              .substring(0, 300);
 
-            if (url.startsWith('http')) {
+            if (title && url && url.startsWith('http')) {
               results.push({
-                title,
-                url,
+                title: title.substring(0, 200),
+                url: url,
                 snippet: snippet || 'No description available',
                 source: 'Google'
               });
@@ -312,10 +305,13 @@ class WebScraperUltra {
           }
         });
 
-        if (results.length > 0) break; // Found results, no need to try other selectors
+        if (results.length > 0) break; // Found results with this selector
       }
 
-      console.log(`✅ Found ${results.length} Google results`);
+      if (results.length === 0) {
+        throw new Error('No results parsed from Google');
+      }
+
       return results;
 
     } catch (error) {
@@ -324,10 +320,9 @@ class WebScraperUltra {
     }
   }
 
-  // DUCKDUCKGO FALLBACK - IMPROVED
   async searchDuckDuckGo(query, numResults = 10) {
     try {
-      // Use DuckDuckGo HTML version
+      // Use DuckDuckGo HTML version (more reliable)
       const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
       
       const response = await axios.get(searchUrl, {
@@ -335,7 +330,7 @@ class WebScraperUltra {
           'User-Agent': this.getRandomUserAgent(),
           'Accept': 'text/html'
         },
-        timeout: 15000
+        timeout: 10000
       });
 
       const $ = cheerio.load(response.data);
@@ -352,72 +347,82 @@ class WebScraperUltra {
 
         if (title && url) {
           results.push({
-            title,
+            title: title.substring(0, 200),
             url: url.startsWith('http') ? url : `https://${url}`,
-            snippet: snippet || 'No description',
+            snippet: snippet || 'No description available',
             source: 'DuckDuckGo'
           });
         }
       });
 
-      console.log(`✅ Found ${results.length} DuckDuckGo results`);
       return results;
     } catch (error) {
-      console.error('❌ DuckDuckGo search failed:', error.message);
-      return [];
+      throw new Error(`DuckDuckGo search failed: ${error.message}`);
     }
   }
 
-  // SYNTHETIC RESULTS GENERATOR (Last Resort)
-  generateSyntheticResults(query, numResults) {
-    const keywords = query.toLowerCase().split(' ').slice(0, 5);
-    const results = [];
-
-    // Generate realistic-looking results based on the query
+  // SMART: Generate useful synthetic results based on query
+  generateSmartSyntheticResults(query, numResults) {
+    const keywords = query.toLowerCase().split(' ').filter(w => w.length > 3).slice(0, 5);
+    const mainKeyword = keywords[0] || 'business';
+    
     const templates = [
       {
-        title: `${keywords[0]} - Official Website`,
-        url: `https://www.${keywords[0]}.com`,
-        snippet: `The leading ${keywords.join(' ')} platform. Trusted by thousands of users worldwide.`
+        title: `${mainKeyword} - Official Website & Platform`,
+        url: `https://www.${mainKeyword}.com`,
+        snippet: `The leading ${query} platform. Comprehensive solutions for businesses and individuals worldwide.`
       },
       {
-        title: `Top 10 ${keywords.slice(0, 3).join(' ')} Solutions`,
-        url: `https://www.business-solutions.com/${keywords[0]}`,
-        snippet: `Discover the best ${keywords.slice(0, 3).join(' ')} options for your business needs.`
+        title: `Top 10 ${mainKeyword} Solutions for 2025`,
+        url: `https://www.comparisons.com/${mainKeyword}-reviews`,
+        snippet: `Expert comparison of the best ${query} options. Features, pricing, and user reviews.`
       },
       {
-        title: `${keywords[0]} Reviews and Comparisons`,
-        url: `https://www.reviews.com/${keywords[0]}`,
-        snippet: `Expert reviews and user ratings for ${keywords.slice(0, 3).join(' ')} services.`
+        title: `${mainKeyword} Reviews & Ratings`,
+        url: `https://www.reviews.com/${mainKeyword}`,
+        snippet: `Real user reviews and ratings for ${query}. See what customers are saying.`
       },
       {
-        title: `${keywords[0]} - Wikipedia`,
-        url: `https://en.wikipedia.org/wiki/${keywords[0]}`,
-        snippet: `Comprehensive information about ${keywords.slice(0, 3).join(' ')}.`
+        title: `${mainKeyword} - Wikipedia`,
+        url: `https://en.wikipedia.org/wiki/${mainKeyword}`,
+        snippet: `Comprehensive information about ${query} including history, features, and market analysis.`
       },
       {
-        title: `${keywords[0]} Market Analysis 2025`,
-        url: `https://www.marketresearch.com/${keywords[0]}`,
-        snippet: `Latest market trends and analysis for ${keywords.slice(0, 3).join(' ')}.`
+        title: `${mainKeyword} Market Report 2025`,
+        url: `https://www.marketresearch.com/${mainKeyword}`,
+        snippet: `Latest market trends, size, and forecast for ${query}. Industry insights and analysis.`
+      },
+      {
+        title: `How to Choose ${mainKeyword} Solution`,
+        url: `https://www.businessguide.com/choosing-${mainKeyword}`,
+        snippet: `Complete guide to selecting the right ${query}. Compare features, pricing, and benefits.`
+      },
+      {
+        title: `${mainKeyword} Best Practices`,
+        url: `https://www.bestpractices.com/${mainKeyword}`,
+        snippet: `Industry best practices and tips for ${query}. Learn from experts and successful cases.`
+      },
+      {
+        title: `${mainKeyword} Industry News & Updates`,
+        url: `https://www.industrynews.com/${mainKeyword}`,
+        snippet: `Latest news, updates, and trends in ${query}. Stay informed about market developments.`
       }
     ];
 
     const count = Math.min(numResults, templates.length);
-    for (let i = 0; i < count; i++) {
-      results.push({
-        ...templates[i],
-        source: 'Synthetic',
-        note: 'Generated result (search unavailable)'
-      });
-    }
+    const results = templates.slice(0, count).map(template => ({
+      ...template,
+      source: 'Synthetic',
+      note: 'Generated result (search unavailable)'
+    }));
 
     console.log(`⚠️ Generated ${results.length} synthetic results`);
     return results;
   }
 
-  // SCRAPE MULTIPLE PAGES IN PARALLEL
+  // ENHANCED: Scrape multiple pages with better error handling
   async scrapeMultiple(urls, options = {}) {
-    console.log(`🌐 Scraping ${urls.length} URLs in parallel...`);
+    console.log(`🌐 Scraping ${urls.length} URLs...`);
 
     const maxConcurrent = options.maxConcurrent || 3;
     const results = [];
@@ -434,7 +439,7 @@ class WebScraperUltra {
           results.push(result.value);
         } else {
           console.warn(`⚠️ Failed to scrape: ${url}`);
-          results.push({ url, error: 'Scraping failed' });
+          results.push({ url, error: 'Scraping failed', method: 'failed' });
         }
       });
 
@@ -448,7 +453,7 @@ class WebScraperUltra {
     return results;
   }
 
-  // INTELLIGENT DATA EXTRACTORS
+  // Data extraction helpers
   extractHeadings($) {
     const headings = [];
     $('h1, h2, h3').each((i, elem) => {
@@ -503,19 +508,6 @@ class WebScraperUltra {
       .trim();
     
     return text.substring(0, 10000);
-  }
-
-  extractStructuredData($) {
-    const structured = [];
-    $('script[type="application/ld+json"]').each((i, elem) => {
-      try {
-        const data = JSON.parse($(elem).html());
-        structured.push(data);
-      } catch (e) {
-        // Invalid JSON, skip
-      }
-    });
-    return structured;
   }
 
   extractSocialLinks($) {
@@ -582,14 +574,11 @@ class WebScraperUltra {
   extractFeatures($) {
     const features = [];
     
-    // Look for common feature indicators
     const featureSelectors = [
       '.features li',
       '.feature-list li',
       '[class*="feature"] h3',
-      '[class*="benefit"] h3',
-      'ul[class*="feature"] li',
-      'ul[class*="benefit"] li'
+      'ul[class*="feature"] li'
     ];
 
     featureSelectors.forEach(selector => {
@@ -604,7 +593,6 @@ class WebScraperUltra {
     return [...new Set(features)].slice(0, 20);
   }
 
-  // EXTRACT REVIEWS FROM PAGE
   async extractReviews(url, selector = '.review, [class*="review"]') {
     console.log(`⭐ Extracting reviews from: ${url}`);
 
@@ -630,36 +618,6 @@ class WebScraperUltra {
 
     console.log(`✅ Extracted ${reviews.length} reviews`);
     return reviews;
-  }
-
-  // SCRAPE PRODUCT HUNT
-  async scrapeProductHunt(query) {
-    const url = `https://www.producthunt.com/search?q=${encodeURIComponent(query)}`;
-    console.log(`🏆 Scraping Product Hunt: ${query}`);
-
-    try {
-      const data = await this.scrapePage(url, { timeout: 20000 });
-      if (data.error) return [];
-
-      const products = [];
-      const lines = data.text.split('\n');
-
-      lines.forEach(line => {
-        const trimmed = line.trim();
-        if (trimmed.length > 30 && trimmed.length < 200) {
-          products.push({
-            name: trimmed.substring(0, 100),
-            url: `https://www.producthunt.com/search?q=${encodeURIComponent(query)}`,
-            source: 'Product Hunt'
-          });
-        }
-      });
-
-      return products.slice(0, 5);
-    } catch (error) {
-      console.error('Product Hunt scraping failed:', error.message);
-      return [];
-    }
   }
 
   clearCache() {

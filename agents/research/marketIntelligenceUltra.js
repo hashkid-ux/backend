@@ -1,9 +1,8 @@
 // agents/research/marketIntelligenceUltra.js
-// ULTRA Market Intelligence - PRODUCTION GRADE with Robust Error Handling
+// BULLETPROOF Market Intelligence with Enhanced JSON Parsing
 
 const AIClient = require('../../services/aiClient');
 const WebScraperUltra = require('./webScraperUltra');
-const axios = require('axios');
 
 class MarketIntelligenceAgentUltra {
   constructor(tier = 'free') {
@@ -29,6 +28,7 @@ class MarketIntelligenceAgentUltra {
       );
 
       console.log(`✅ Found ${competitors.length} competitors from multiple sources`);
+      await this.sleep(3000); // Cooldown between steps
 
       // Step 2: Get market trends
       console.log('📈 Step 2: Multi-source trend analysis...');
@@ -39,12 +39,14 @@ class MarketIntelligenceAgentUltra {
       );
 
       console.log(`✅ Found ${trends.recent_news.length} news articles`);
+      await this.sleep(3000); // Cooldown
 
       // Step 3: Get industry reports
       console.log('📊 Step 3: Industry report analysis...');
       const industryData = await this.getIndustryReports(ideaDescription, targetCountry);
+      await this.sleep(3000); // Cooldown
 
-      // Step 4: AI synthesis with ALL data (WITH ROBUST ERROR HANDLING)
+      // Step 4: AI synthesis with BULLETPROOF JSON parsing
       console.log('🤖 Step 4: AI synthesis with comprehensive data...');
       const analysis = await this.synthesizeDataUltraRobust(
         ideaDescription,
@@ -68,110 +70,113 @@ class MarketIntelligenceAgentUltra {
     }
   }
 
-  // ROBUST SYNTHESIS WITH MULTIPLE FALLBACK STRATEGIES
+  // BULLETPROOF SYNTHESIS with Multiple JSON Extraction Strategies
   async synthesizeDataUltraRobust(idea, country, competitors, trends, industryData, dateContext) {
-    console.log('🤖 AI synthesizing ULTRA market intelligence (robust mode)...');
+    console.log('🤖 AI synthesizing market intelligence (BULLETPROOF)...');
 
-    // Try complex analysis first
+    // Try progressively simpler approaches
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        console.log(`   Attempt ${attempt}/${this.maxRetries}...`);
+        console.log(`   Synthesis attempt ${attempt}/${this.maxRetries}...`);
         
-        const result = await this.tryComplexSynthesis(
-          idea, country, competitors, trends, industryData, dateContext
-        );
-        
-        if (result) {
-          console.log('✅ Complex synthesis successful');
-          return result;
+        if (attempt === 1) {
+          // Try comprehensive synthesis
+          const result = await this.tryComprehensiveSynthesis(
+            idea, country, competitors, trends, industryData, dateContext
+          );
+          if (result) {
+            console.log('✅ Comprehensive synthesis successful');
+            return result;
+          }
+        } else if (attempt === 2) {
+          // Try medium synthesis
+          const result = await this.tryMediumSynthesis(
+            idea, competitors, trends, dateContext
+          );
+          if (result) {
+            console.log('✅ Medium synthesis successful');
+            return result;
+          }
+        } else {
+          // Try simple synthesis
+          const result = await this.trySimpleSynthesis(
+            idea, competitors, trends, dateContext
+          );
+          if (result) {
+            console.log('✅ Simple synthesis successful');
+            return result;
+          }
         }
       } catch (error) {
-        console.warn(`   ⚠️ Attempt ${attempt} failed:`, error.message);
+        console.warn(`   ⚠️ Synthesis attempt ${attempt} failed: ${error.message}`);
         
         if (attempt < this.maxRetries) {
-          await this.sleep(2000 * attempt); // Exponential backoff
+          await this.sleep(3000 * attempt);
         }
       }
     }
 
-    // Fallback: Simple synthesis
-    console.log('   Falling back to simple synthesis...');
-    try {
-      const result = await this.trySimpleSynthesis(idea, competitors, trends, dateContext);
-      if (result) {
-        console.log('✅ Simple synthesis successful');
-        return result;
-      }
-    } catch (error) {
-      console.error('   ❌ Simple synthesis failed:', error.message);
-    }
-
-    // Final fallback: Rule-based analysis
-    console.log('   Falling back to rule-based analysis...');
+    // All AI attempts failed - use rule-based analysis
+    console.log('   ⚠️ All AI synthesis failed, using rule-based analysis...');
     return this.generateRuleBasedAnalysis(idea, country, competitors, trends, dateContext);
   }
 
-  async tryComplexSynthesis(idea, country, competitors, trends, industryData, dateContext) {
-    const prompt = `Analyze this business idea with DEEP insights.
+  async tryComprehensiveSynthesis(idea, country, competitors, trends, industryData, dateContext) {
+    const prompt = `You are a market research expert. Analyze this business idea with comprehensive insights.
 
-BUSINESS IDEA: ${idea}
-TARGET MARKET: ${country}
+**CRITICAL INSTRUCTIONS:**
+1. Return ONLY valid JSON - no markdown, no explanations, no code blocks
+2. Start response with { and end with }
+3. Use double quotes for all strings
+4. Escape special characters properly
+
+PROJECT: ${idea}
+MARKET: ${country}
 DATE: ${dateContext.currentDate}
 SEASON: ${dateContext.season}
 
-COMPETITOR DATA (${competitors.length} competitors):
-${JSON.stringify(competitors.slice(0, 5), null, 2)}
+DATA AVAILABLE:
+- ${competitors.length} competitors found
+- ${trends.recent_news.length} news articles
+- ${industryData.length} industry reports
 
-MARKET TRENDS (${trends.recent_news.length} articles):
-${JSON.stringify(trends.recent_news.slice(0, 3), null, 2)}
-
-Return ONLY valid JSON (no markdown, no explanation):
+Return this EXACT JSON structure:
 {
   "market_overview": {
-    "size": "Specific TAM with numbers",
-    "growth_rate": "YoY % with evidence",
-    "maturity": "emerging/growing/mature/declining",
-    "seasonality": "How ${dateContext.season} affects this",
-    "upcoming_opportunities": ["Based on upcoming events"]
+    "size": "Specific market size estimate (e.g., $5B, Large, Growing)",
+    "growth_rate": "Percentage or description",
+    "maturity": "emerging OR growing OR mature OR declining"
   },
-  "competition_level": "low/medium/high/very-high",
+  "competition_level": "low OR medium OR high OR very-high",
   "key_competitors": [
     {
       "name": "Competitor name",
-      "position": "market leader/challenger/niche",
-      "estimated_users": "Number estimate",
-      "key_differentiator": "What makes them unique",
-      "weaknesses": ["weakness1", "weakness2"]
+      "position": "market leader OR challenger OR niche",
+      "key_differentiator": "What makes them unique"
     }
   ],
   "market_gaps": [
     {
       "gap": "Specific unmet need",
       "evidence": "Why this gap exists",
-      "opportunity_size": "Small/Medium/Large",
-      "ease_to_fill": "Easy/Medium/Hard"
+      "opportunity_size": "Small OR Medium OR Large"
     }
   ],
-  "target_audience": {
-    "primary": "Detailed persona",
-    "size": "Number estimate",
-    "willingness_to_pay": "low/medium/high",
-    "pain_points": ["Real pain points"]
-  },
   "opportunities": ["Opportunity 1", "Opportunity 2"],
   "threats": ["Threat 1", "Threat 2"]
 }`;
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: this.tier === 'premium' ? 8000 : 4000,
+      max_tokens: this.tier === 'premium' ? 6000 : 3000,
+      temperature: 0.3, // Lower for more consistent JSON
       messages: [{ role: 'user', content: prompt }]
     });
 
     const content = response.content[0].text;
     
-    // Try multiple JSON extraction strategies
-    const parsed = this.extractJSON(content);
+    // ENHANCED: Multiple JSON extraction strategies
+    const parsed = this.extractJSONWithMultipleStrategies(content);
     
     if (parsed && this.validateMarketAnalysis(parsed)) {
       // Add metadata
@@ -179,10 +184,11 @@ Return ONLY valid JSON (no markdown, no explanation):
         competitors_found: competitors.length,
         news_articles: trends.recent_news.length,
         industry_reports: industryData.length,
-        data_sources: competitors.map(c => c.url).filter(Boolean),
+        data_sources: competitors.map(c => c.url).filter(Boolean).slice(0, 10),
         analysis_date: dateContext.currentDate,
         tier: this.tier,
-        data_quality: this.calculateDataQuality(competitors, trends)
+        data_quality: this.calculateDataQuality(competitors, trends),
+        synthesis_method: 'comprehensive'
       };
       return parsed;
     }
@@ -190,44 +196,44 @@ Return ONLY valid JSON (no markdown, no explanation):
     throw new Error('JSON extraction or validation failed');
   }
 
-  async trySimpleSynthesis(idea, competitors, trends, dateContext) {
-    const prompt = `Analyze this business idea in simple JSON format.
+  async tryMediumSynthesis(idea, competitors, trends, dateContext) {
+    const prompt = `Analyze this business idea. Return ONLY valid JSON, no markdown.
 
 IDEA: ${idea}
 COMPETITORS: ${competitors.length} found
 NEWS: ${trends.recent_news.length} articles
 
-Return ONLY this JSON:
+Return EXACTLY this structure (valid JSON only):
 {
   "market_overview": {
-    "size": "Market size estimate",
-    "growth_rate": "Growth percentage",
-    "maturity": "emerging/growing/mature/declining"
+    "size": "Market size",
+    "growth_rate": "Growth rate",
+    "maturity": "emerging"
   },
-  "competition_level": "low/medium/high",
+  "competition_level": "medium",
   "key_competitors": [{"name": "Name", "position": "Position"}],
   "market_gaps": [{"gap": "Gap description"}],
-  "opportunities": ["Opportunity"],
-  "threats": ["Threat"]
+  "opportunities": ["Opportunity 1"],
+  "threats": ["Threat 1"]
 }`;
 
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 2000,
+      temperature: 0.2,
       messages: [{ role: 'user', content: prompt }]
     });
 
     const content = response.content[0].text;
-    const parsed = this.extractJSON(content);
+    const parsed = this.extractJSONWithMultipleStrategies(content);
     
-    if (parsed) {
-      // Add metadata
+    if (parsed && this.validateMarketAnalysis(parsed)) {
       parsed._meta = {
         competitors_found: competitors.length,
         news_articles: trends.recent_news.length,
         analysis_date: dateContext.currentDate,
         tier: this.tier,
-        simplified: true
+        synthesis_method: 'medium'
       };
       return parsed;
     }
@@ -235,10 +241,138 @@ Return ONLY this JSON:
     return null;
   }
 
-  generateRuleBasedAnalysis(idea, country, competitors, trends, dateContext) {
-    console.log('📊 Generating rule-based analysis as final fallback...');
+  async trySimpleSynthesis(idea, competitors, trends, dateContext) {
+    const prompt = `Simple JSON analysis. ONLY return this exact JSON structure:
+{"market_overview":{"size":"Unknown","growth_rate":"Unknown","maturity":"unknown"},"competition_level":"medium","key_competitors":[],"market_gaps":[],"opportunities":["Research ongoing"],"threats":["Competition exists"]}
 
-    // Analyze competition level based on competitor count
+Customize values based on: ${idea}`;
+
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 1000,
+      temperature: 0.1,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const content = response.content[0].text;
+    const parsed = this.extractJSONWithMultipleStrategies(content);
+    
+    if (parsed) {
+      parsed._meta = {
+        synthesis_method: 'simple',
+        fallback: true
+      };
+      return parsed;
+    }
+
+    return null;
+  }
+
+  // ENHANCED: Multiple JSON extraction strategies
+  extractJSONWithMultipleStrategies(text) {
+    console.log('   🔍 Attempting JSON extraction...');
+    
+    // Strategy 1: Direct JSON match
+    try {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        const json = JSON.parse(match[0]);
+        console.log('   ✅ Strategy 1 (Direct match) succeeded');
+        return json;
+      }
+    } catch (e) {
+      console.log('   ❌ Strategy 1 failed:', e.message.substring(0, 50));
+    }
+
+    // Strategy 2: Remove markdown code blocks
+    try {
+      const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        const json = JSON.parse(match[0]);
+        console.log('   ✅ Strategy 2 (Markdown removal) succeeded');
+        return json;
+      }
+    } catch (e) {
+      console.log('   ❌ Strategy 2 failed:', e.message.substring(0, 50));
+    }
+
+    // Strategy 3: Find first { and last }
+    try {
+      const firstBrace = text.indexOf('{');
+      const lastBrace = text.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        const jsonStr = text.substring(firstBrace, lastBrace + 1);
+        const json = JSON.parse(jsonStr);
+        console.log('   ✅ Strategy 3 (Brace search) succeeded');
+        return json;
+      }
+    } catch (e) {
+      console.log('   ❌ Strategy 3 failed:', e.message.substring(0, 50));
+    }
+
+    // Strategy 4: Remove comments and try
+    try {
+      let cleaned = text.replace(/\/\*[\s\S]*?\*\//g, ''); // Remove /* */ comments
+      cleaned = cleaned.replace(/\/\/.*/g, ''); // Remove // comments
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        const json = JSON.parse(match[0]);
+        console.log('   ✅ Strategy 4 (Comment removal) succeeded');
+        return json;
+      }
+    } catch (e) {
+      console.log('   ❌ Strategy 4 failed:', e.message.substring(0, 50));
+    }
+
+    // Strategy 5: Fix common JSON errors
+    try {
+      let cleaned = text.match(/\{[\s\S]*\}/)?.[0] || '';
+      // Fix trailing commas
+      cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+      // Fix single quotes to double quotes
+      cleaned = cleaned.replace(/'/g, '"');
+      const json = JSON.parse(cleaned);
+      console.log('   ✅ Strategy 5 (Error fixing) succeeded');
+      return json;
+    } catch (e) {
+      console.log('   ❌ Strategy 5 failed:', e.message.substring(0, 50));
+    }
+
+    console.log('   ❌ All JSON extraction strategies failed');
+    console.log('   📄 Sample response:', text.substring(0, 200));
+    return null;
+  }
+
+  validateMarketAnalysis(data) {
+    if (!data || typeof data !== 'object') {
+      console.log('   ❌ Validation failed: Not an object');
+      return false;
+    }
+    
+    // Must have key fields
+    const requiredFields = ['market_overview', 'competition_level'];
+    for (const field of requiredFields) {
+      if (!data[field]) {
+        console.log(`   ❌ Validation failed: Missing ${field}`);
+        return false;
+      }
+    }
+
+    // Validate nested structure
+    if (!data.market_overview.size) {
+      console.log('   ❌ Validation failed: Missing market_overview.size');
+      return false;
+    }
+
+    console.log('   ✅ Validation passed');
+    return true;
+  }
+
+  generateRuleBasedAnalysis(idea, country, competitors, trends, dateContext) {
+    console.log('📊 Generating rule-based analysis (AI-free fallback)...');
+
+    // Analyze competition level
     let competitionLevel = 'medium';
     if (competitors.length === 0) competitionLevel = 'low';
     else if (competitors.length < 3) competitionLevel = 'low';
@@ -251,28 +385,26 @@ Return ONLY this JSON:
       name: c.name || 'Unknown Competitor',
       position: 'challenger',
       url: c.url,
-      estimated_users: 'Data not available',
-      key_differentiator: c.description || 'Analysis pending',
-      weaknesses: []
+      key_differentiator: c.description || 'Analysis in progress'
     }));
 
-    // Identify market gaps from trends
+    // Market gaps from trends
     const marketGaps = trends.recent_news.slice(0, 3).map((news, i) => ({
-      gap: `Opportunity ${i + 1}: ${news.title}`,
+      gap: `Opportunity ${i + 1}: ${news.title?.substring(0, 100)}`,
       evidence: news.summary || news.title,
-      opportunity_size: 'Medium',
-      ease_to_fill: 'Medium'
+      opportunity_size: 'Medium'
     }));
 
-    // Generate opportunities and threats
+    // Generate opportunities
     const opportunities = [
       competitors.length < 5 ? 'Low competition - easier market entry' : 'Established market with proven demand',
       `Current season (${dateContext.season}) favorable for launch`,
       trends.recent_news.length > 5 ? 'High market interest and activity' : 'Emerging market with growth potential'
     ];
 
+    // Generate threats
     const threats = [
-      competitors.length > 10 ? 'High competition - differentiation critical' : 'New competitors may enter',
+      competitors.length > 10 ? 'High competition - strong differentiation required' : 'New competitors may enter',
       'Market conditions may change',
       'Customer acquisition costs may be high'
     ];
@@ -285,135 +417,23 @@ Return ONLY this JSON:
         growth_rate: trends.recent_news.length > 8 
           ? 'High growth indicated by news activity' 
           : 'Moderate to stable growth',
-        maturity: competitors.length > 15 ? 'mature' : competitors.length > 5 ? 'growing' : 'emerging',
-        seasonality: `Current ${dateContext.season} season may ${dateContext.marketTrend.includes('high') ? 'increase' : 'moderately affect'} demand`,
-        upcoming_opportunities: dateContext.upcomingEvents?.map(e => e.name) || []
+        maturity: competitors.length > 15 ? 'mature' : competitors.length > 5 ? 'growing' : 'emerging'
       },
       competition_level: competitionLevel,
       key_competitors: keyCompetitors,
       market_gaps: marketGaps,
-      target_audience: {
-        primary: 'Market analysis required for detailed persona',
-        size: competitors.length > 5 ? 'Large addressable audience' : 'Niche but growing audience',
-        willingness_to_pay: 'medium',
-        pain_points: [
-          'Existing solutions may be inadequate',
-          'Need for better alternatives identified'
-        ]
-      },
-      entry_barriers: [
-        {
-          barrier: competitionLevel === 'very-high' ? 'High competition' : 'Market education needed',
-          severity: competitionLevel === 'very-high' ? 'high' : 'medium',
-          mitigation: 'Strong differentiation and unique value proposition'
-        }
-      ],
-      seasonal_insights: {
-        current_season_impact: dateContext.marketTrend,
-        best_launch_timing: `Consider launching during ${dateContext.season} or next favorable season`,
-        seasonal_opportunities: dateContext.upcomingEvents?.map(e => `Leverage ${e.name}`) || []
-      },
       opportunities,
       threats,
-      recommended_strategy: this.generateStrategy(competitionLevel, competitors.length),
-      estimated_time_to_market: competitors.length > 10 ? '4-6 months' : '2-4 months',
-      capital_required: competitors.length > 10 
-        ? '$50K-$100K for competitive market entry' 
-        : '$10K-$50K for initial MVP',
       _meta: {
         competitors_found: competitors.length,
         news_articles: trends.recent_news.length,
         data_sources: competitors.map(c => c.url).filter(Boolean),
         analysis_date: dateContext.currentDate,
         tier: this.tier,
-        analysis_type: 'rule_based_fallback',
+        analysis_type: 'rule_based',
         data_quality: this.calculateDataQuality(competitors, trends)
       }
     };
-  }
-
-  generateStrategy(competitionLevel, competitorCount) {
-    if (competitionLevel === 'low' || competitorCount < 3) {
-      return 'First-mover advantage: Focus on rapid market capture, brand building, and establishing market position before competition increases.';
-    } else if (competitionLevel === 'medium') {
-      return 'Differentiation strategy: Identify unique value proposition, target underserved segments, and build strong brand loyalty.';
-    } else {
-      return 'Niche focus strategy: Target specific underserved segment, offer superior solution to specific pain point, leverage gaps in competitor offerings.';
-    }
-  }
-
-  // ROBUST JSON EXTRACTION WITH MULTIPLE STRATEGIES
-  extractJSON(text) {
-    // Strategy 1: Standard JSON block
-    let jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch (e) {
-        console.warn('   Strategy 1 failed, trying strategy 2...');
-      }
-    }
-
-    // Strategy 2: JSON with markdown
-    jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[1]);
-      } catch (e) {
-        console.warn('   Strategy 2 failed, trying strategy 3...');
-      }
-    }
-
-    // Strategy 3: Find first { and last }
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      try {
-        return JSON.parse(text.substring(firstBrace, lastBrace + 1));
-      } catch (e) {
-        console.warn('   Strategy 3 failed, trying strategy 4...');
-      }
-    }
-
-    // Strategy 4: Clean and try
-    try {
-      const cleaned = text
-        .replace(/```json/g, '')
-        .replace(/```/g, '')
-        .replace(/^\s*\n/gm, '')
-        .trim();
-      
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        return JSON.parse(match[0]);
-      }
-    } catch (e) {
-      console.warn('   All JSON extraction strategies failed');
-    }
-
-    return null;
-  }
-
-  validateMarketAnalysis(data) {
-    // Basic structure validation
-    if (!data || typeof data !== 'object') return false;
-    
-    // Must have key fields
-    const requiredFields = ['market_overview', 'competition_level'];
-    for (const field of requiredFields) {
-      if (!data[field]) {
-        console.warn(`   Validation failed: missing ${field}`);
-        return false;
-      }
-    }
-
-    // Validate nested structure
-    if (!data.market_overview.size) {
-      console.warn('   Validation failed: missing market_overview.size');
-      return false;
-    }
-
-    return true;
   }
 
   calculateDataQuality(competitors, trends) {
@@ -425,19 +445,16 @@ Return ONLY this JSON:
     return Math.min(100, score);
   }
 
-  // ... (keep all other methods: findCompetitorsMultiSource, getMarketTrendsMultiSource, etc.)
-  // These methods are already good, just keep them as is
-
   async findCompetitorsMultiSource(idea, country, dateContext) {
-    console.log('🔍 Finding competitors from MULTIPLE sources...');
+    console.log('🔍 Finding competitors from multiple sources...');
     
     const allCompetitors = [];
-    const sources = [];
 
-    // SOURCE 1: Google Search
     try {
-      console.log('   🔸 Source 1: Google Search...');
-      const googleQuery = `${idea} competitors ${country} ${dateContext.season} ${new Date().getFullYear()}`;
+      const keywords = this.extractKeywords(idea).slice(0, 3).join(' ');
+      const googleQuery = `${keywords} ${country} competitors ${dateContext.season} ${new Date().getFullYear()}`;
+      
+      console.log(`   🔸 Searching: "${googleQuery}"`);
       const googleResults = await this.scraper.searchGoogle(googleQuery, 10);
       
       googleResults.forEach(result => {
@@ -446,31 +463,29 @@ Return ONLY this JSON:
             name: this.extractCompanyName(result.title),
             url: result.url,
             description: result.snippet,
-            source: 'Google',
-            relevance: 'high'
+            source: 'Google'
           });
-          sources.push(result.url);
         }
       });
+      
       console.log(`   ✅ Google: Found ${googleResults.length} results`);
     } catch (error) {
       console.error('   ❌ Google search failed:', error.message);
     }
 
-    // Deduplicate and limit
+    // Deduplicate
     const uniqueCompetitors = this.deduplicateCompetitors(allCompetitors);
     return uniqueCompetitors.slice(0, this.maxCompetitors);
   }
 
   async getMarketTrendsMultiSource(idea, country, dateContext) {
-    console.log('📈 Analyzing trends from multiple sources...');
+    console.log('📈 Analyzing market trends...');
     
     const keywords = this.extractKeywords(idea);
     const allNews = [];
 
-    // SOURCE 1: Google News
     try {
-      const newsQuery = `${keywords.join(' ')} ${country} news ${dateContext.season} ${new Date().getFullYear()}`;
+      const newsQuery = `${keywords.slice(0, 3).join(' ')} ${country} news ${new Date().getFullYear()}`;
       const newsResults = await this.scraper.searchGoogle(newsQuery, 10);
       
       newsResults.forEach(result => {
@@ -478,11 +493,11 @@ Return ONLY this JSON:
           title: result.title,
           source: this.extractDomain(result.url),
           summary: result.snippet,
-          url: result.url,
-          relevance: 'high'
+          url: result.url
         });
       });
-      console.log(`   ✅ Google News: Found ${newsResults.length} articles`);
+      
+      console.log(`   ✅ Found ${newsResults.length} news articles`);
     } catch (error) {
       console.error('   ❌ News search failed:', error.message);
     }
@@ -490,13 +505,12 @@ Return ONLY this JSON:
     return {
       keywords,
       recent_news: allNews.slice(0, 15),
-      search_volume: 'High interest detected',
       trend_direction: this.calculateTrendDirection(allNews, dateContext)
     };
   }
 
   async getIndustryReports(idea, country) {
-    console.log('📊 Fetching industry reports...');
+    console.log('📊 Searching for industry reports...');
     
     const reports = [];
 
@@ -519,7 +533,7 @@ Return ONLY this JSON:
 
       console.log(`   ✅ Found ${reports.length} industry reports`);
     } catch (error) {
-      console.error('   ❌ Industry reports fetch failed:', error.message);
+      console.error('   ❌ Industry reports search failed:', error.message);
     }
 
     return reports;
@@ -527,26 +541,26 @@ Return ONLY this JSON:
 
   // Helper methods
   calculateTrendDirection(news, dateContext) {
-    const recentKeywords = ['growing', 'rising', 'increasing', 'surge'];
-    const decliningKeywords = ['declining', 'falling', 'decreasing', 'drop'];
+    const growthKeywords = ['growing', 'rising', 'increasing', 'surge', 'boom'];
+    const decliningKeywords = ['declining', 'falling', 'decreasing', 'drop', 'slump'];
     
-    let growing = 0;
-    let declining = 0;
+    let growthCount = 0;
+    let decliningCount = 0;
     
     news.forEach(article => {
       const text = (article.title + ' ' + article.summary).toLowerCase();
-      recentKeywords.forEach(keyword => {
-        if (text.includes(keyword)) growing++;
+      growthKeywords.forEach(keyword => {
+        if (text.includes(keyword)) growthCount++;
       });
       decliningKeywords.forEach(keyword => {
-        if (text.includes(keyword)) declining++;
+        if (text.includes(keyword)) decliningCount++;
       });
     });
 
-    if (growing > declining * 1.5) return 'rapidly growing';
-    if (growing > declining) return 'growing';
-    if (declining > growing * 1.5) return 'declining';
-    if (declining > growing) return 'slowly declining';
+    if (growthCount > decliningCount * 1.5) return 'rapidly growing';
+    if (growthCount > decliningCount) return 'growing';
+    if (decliningCount > growthCount * 1.5) return 'declining';
+    if (decliningCount > growthCount) return 'slowly declining';
     return 'stable';
   }
 
@@ -598,6 +612,8 @@ Return ONLY this JSON:
       competition_level: 'unknown',
       key_competitors: [],
       market_gaps: [{ gap: 'Research data unavailable', evidence: error.message }],
+      opportunities: [],
+      threats: [],
       _meta: {
         competitors_found: 0,
         news_articles: 0,
