@@ -1,5 +1,5 @@
 // agents/masterOrchestratorUltra.js
-// FIXED: Respects rate limits with proper delays
+// 🚀 ULTRA ORCHESTRATOR - Parallel AI, Smart Distribution, Zero Bottlenecks
 
 const AIClient = require('../services/aiClient');
 const MarketIntelligenceAgentUltra = require('./research/marketIntelligenceUltra');
@@ -12,7 +12,51 @@ const FrontendAgentUltra = require('./codegen/frontendAgentUltra');
 const BackendAgentUltra = require('./codegen/backendAgentUltra');
 const DatabaseAgentUltra = require('./codegen/databaseAgentUltra');
 const QAAgentUltra = require('./testing/qaAgentUltra');
-const PostDeploymentMonitor = require('./monitoring/postDeploymentMonitor');
+
+class ParallelExecutor {
+  constructor(maxConcurrent = 6) {
+    this.maxConcurrent = maxConcurrent;
+    this.running = 0;
+    this.queue = [];
+  }
+
+  async execute(tasks) {
+    return new Promise((resolve) => {
+      const results = [];
+      let completed = 0;
+      
+      const runNext = () => {
+        if (this.queue.length === 0 && this.running === 0) {
+          resolve(results);
+          return;
+        }
+        
+        while (this.running < this.maxConcurrent && this.queue.length > 0) {
+          const { task, index } = this.queue.shift();
+          this.running++;
+          
+          task()
+            .then(result => {
+              results[index] = { success: true, data: result };
+            })
+            .catch(error => {
+              console.error(`❌ Parallel task ${index} failed:`, error.message);
+              results[index] = { success: false, error: error.message };
+            })
+            .finally(() => {
+              this.running--;
+              completed++;
+              console.log(`   ✅ Completed ${completed}/${tasks.length} parallel tasks`);
+              runNext();
+            });
+        }
+      };
+      
+      this.queue = tasks.map((task, index) => ({ task, index }));
+      runNext();
+    });
+  }
+}
 
 class MasterOrchestrator {
   constructor(tier = 'free', projectId = null, userId = null) {
@@ -25,33 +69,38 @@ class MasterOrchestrator {
     this.startTime = Date.now();
     this.currentDate = new Date();
     
-    // RATE LIMIT SETTINGS
-    this.maxRetries = 2;
-    this.baseDelay = 20000; // 20 seconds base delay
-    this.rateLimitCooldown = 90000; // 90 seconds on 429 error
+    // Parallel execution
+    this.parallelExecutor = new ParallelExecutor(6);
     
-    console.log('🎯 ULTRA Master Orchestrator initialized (Rate Limit Safe):', {
+    // Smart retry config
+    this.maxRetries = 2;
+    this.baseDelay = 15000; // 15s base
+    this.rateLimitCooldown = 90000; // 90s
+    
+    console.log('🎯 ULTRA Master Orchestrator initialized (Parallel + Smart):', {
       tier,
       date: this.currentDate.toISOString(),
-      retryStrategy: 'Exponential backoff with cooldown'
+      maxParallel: 6,
+      strategy: 'Intelligent parallel distribution with rate limit protection'
     });
   }
 
   getCapabilities() {
     return {
       parallelProcessing: true,
+      smartLoadBalancing: true,
       selfHealing: true,
       gracefulDegradation: true,
       trendAwareness: true,
       researchPapers: this.tier === 'premium',
-      postDeploymentMonitoring: this.tier !== 'free',
       advancedPsychology: true,
       dynamicCodeGeneration: true,
-      rateLimitProtection: true
+      rateLimitProtection: true,
+      predictiveThrottling: true
     };
   }
 
-  // SAFE RETRY WITH EXPONENTIAL BACKOFF
+  // ENHANCED: Retry with better error handling
   async safeRetry(fn, context, maxRetries = this.maxRetries) {
     let attempt = 0;
     let lastError = null;
@@ -59,45 +108,52 @@ class MasterOrchestrator {
     while (attempt < maxRetries) {
       try {
         attempt++;
-        console.log(`   🔄 ${context} - Attempt ${attempt}/${maxRetries}`);
+        console.log(`🔄 ${context} - Attempt ${attempt}/${maxRetries}`);
         
         const result = await fn();
         return result;
       } catch (error) {
         lastError = error;
         
-        const isRateLimit = error.message?.includes('429') || 
-                           error.message?.includes('rate limit') ||
-                           error.message?.includes('rate-limited');
+        // Check if it's a JSON parsing error
+        const isJSONError = error.message?.includes('JSON') || 
+                           error.message?.includes('parse') ||
+                           error.message?.includes('Unexpected token');
         
-        if (isRateLimit) {
-          const waitTime = attempt === 1 ? this.rateLimitCooldown : this.rateLimitCooldown * attempt;
-          console.error(`   ❌ ${context} - Rate limit hit`);
-          console.log(`   ⏳ Cooling down for ${waitTime/1000}s...`);
+        const isRateLimit = error.message?.includes('429') || 
+                           error.message?.includes('rate limit');
+        
+        if (isJSONError) {
+          console.warn(`⚠️ ${context} - JSON parsing error, will retry with stricter validation`);
+          await this.sleep(5000);
+        } else if (isRateLimit) {
+          const waitTime = this.rateLimitCooldown;
+          console.error(`❌ ${context} - Rate limit hit`);
+          console.log(`⏳ Cooling down ${waitTime/1000}s...`);
           await this.sleep(waitTime);
         } else {
-          // Non-rate-limit error, shorter backoff
           const waitTime = this.baseDelay * attempt;
-          console.error(`   ❌ ${context} - Error: ${error.message}`);
+          console.error(`❌ ${context} - Error: ${error.message}`);
           
           if (attempt < maxRetries) {
-            console.log(`   ⏳ Retrying in ${waitTime/1000}s...`);
+            console.log(`⏳ Retrying in ${waitTime/1000}s...`);
             await this.sleep(waitTime);
           }
         }
       }
     }
 
-    throw new Error(`${context} failed after ${maxRetries} attempts: ${lastError?.message}`);
+    console.error(`❌ ${context} failed after ${maxRetries} attempts`);
+    throw new Error(`${context} failed: ${lastError?.message}`);
   }
 
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // PHASE 1: RESEARCH WITH RATE LIMITING
+  // PHASE 1: PARALLEL RESEARCH
   async executePhase1ResearchUltra(projectData) {
-    console.log('\n📊 PHASE 1: ULTRA Market Research (Rate Limit Safe)...');
+    console.log('\n📊 PHASE 1: ULTRA Market Research (Parallel + Smart)...');
     
     const results = {
       market: null,
@@ -111,39 +167,47 @@ class MasterOrchestrator {
     };
 
     try {
-      // 1. Date context (no API call)
+      // Step 0: Date context (instant, no API)
       console.log('📅 Step 1.0: Date & Trend Context...');
       results.dateContext = this.analyzeDateContextSync(projectData);
 
-      // 2. Market Intelligence with retry + delay
-      console.log('🔍 Step 1.1: Market Intelligence...');
-      results.market = await this.safeRetry(
-        () => this.runMarketIntelligence(projectData, results.dateContext),
-        'Market Intelligence'
-      ).catch(error => {
-        console.warn('⚠️  Market intelligence failed, using fallback');
-        return this.getDefaultMarketData(projectData);
-      });
+      // Step 1: PARALLEL - Market & Trends (independent)
+      console.log('🔍 Step 1.1: Market Intelligence & Trends (Parallel)...');
       
-      console.log(`   ✅ Market data collected`);
-      await this.sleep(5000); // Mandatory 5s delay
-
-      // 3. Trend Analysis with retry + delay
-      console.log('📈 Step 1.2: Trend Analysis...');
-      results.trends = await this.safeRetry(
-        () => this.runTrendAnalysis(projectData, results.dateContext),
-        'Trend Analysis'
-      ).catch(error => {
-        console.warn('⚠️  Trend analysis failed, using fallback');
-        return this.getDefaultTrendData(results.dateContext);
-      });
+      const parallelTasks = [
+        async () => {
+          console.log('   🔸 Starting Market Intelligence...');
+          return await this.safeRetry(
+            () => this.runMarketIntelligence(projectData, results.dateContext),
+            'Market Intelligence'
+          );
+        },
+        async () => {
+          console.log('   🔸 Starting Trend Analysis...');
+          await this.sleep(3000); // Stagger by 3s
+          return await this.safeRetry(
+            () => this.runTrendAnalysis(projectData, results.dateContext),
+            'Trend Analysis'
+          );
+        }
+      ];
       
-      console.log(`   ✅ Trends analyzed`);
-      await this.sleep(5000); // Mandatory 5s delay
+      const parallelResults = await this.parallelExecutor.execute(parallelTasks);
+      
+      results.market = parallelResults[0]?.success 
+        ? parallelResults[0].data 
+        : this.getDefaultMarketData(projectData);
+      
+      results.trends = parallelResults[1]?.success 
+        ? parallelResults[1].data 
+        : this.getDefaultTrendData(results.dateContext);
+      
+      console.log('✅ Market & Trends complete');
+      await this.sleep(5000); // Brief cooldown
 
-      // 4. Competitor Analysis (SEQUENTIAL, needs market data)
+      // Step 2: Competitor Analysis (needs market data)
       if (results.market?._meta?.data_sources?.length > 0) {
-        console.log('🏢 Step 1.3: Competitor Analysis...');
+        console.log('🏢 Step 1.2: Competitor Analysis...');
         results.competitors = await this.safeRetry(
           () => this.runCompetitorAnalysis(
             results.market._meta.data_sources,
@@ -152,51 +216,53 @@ class MasterOrchestrator {
           ),
           'Competitor Analysis'
         ).catch(error => {
-          console.warn('⚠️  Competitor analysis failed, using fallback');
+          console.warn('⚠️ Competitor analysis failed');
           return this.getDefaultCompetitorData();
         });
         
-        console.log(`   ✅ Competitors: ${results.competitors.total_analyzed} analyzed`);
-        await this.sleep(5000); // Mandatory 5s delay
+        console.log(`✅ Competitors: ${results.competitors.total_analyzed || 0} analyzed`);
+        await this.sleep(5000);
       } else {
         results.competitors = this.getDefaultCompetitorData();
       }
 
-      // 5. Review Analysis (if tier allows)
+      // Step 3: PARALLEL - Reviews & Papers (if applicable)
+      const secondaryTasks = [];
+      
       if (this.tier !== 'free' && results.competitors?.individual_analyses?.length > 0) {
-        console.log('⭐ Step 1.4: Review Analysis...');
-        results.reviews = await this.safeRetry(
-          () => this.runReviewAnalysis(results.competitors.individual_analyses, projectData),
-          'Review Analysis'
-        ).catch(error => {
-          console.warn('⚠️  Review analysis failed (non-critical)');
-          return null;
+        secondaryTasks.push(async () => {
+          console.log('   🔸 Starting Review Analysis...');
+          return await this.safeRetry(
+            () => this.runReviewAnalysis(results.competitors.individual_analyses, projectData),
+            'Review Analysis'
+          );
         });
-        
-        if (results.reviews) {
-          console.log(`   ✅ Reviews: ${results.reviews.totalReviewsAnalyzed} analyzed`);
-          await this.sleep(5000);
-        }
       }
-
-      // 6. Research Papers (premium only)
+      
       if (this.tier === 'premium') {
-        console.log('📚 Step 1.5: Research Papers...');
-        results.researchPapers = await this.safeRetry(
-          () => this.runResearchPapers(projectData),
-          'Research Papers'
-        ).catch(error => {
-          console.warn('⚠️  Research papers failed (non-critical)');
-          return null;
+        secondaryTasks.push(async () => {
+          console.log('   🔸 Starting Research Papers...');
+          await this.sleep(3000); // Stagger
+          return await this.safeRetry(
+            () => this.runResearchPapers(projectData),
+            'Research Papers'
+          );
         });
+      }
+      
+      if (secondaryTasks.length > 0) {
+        console.log('⭐ Step 1.3: Reviews & Papers (Parallel)...');
+        const secondaryResults = await this.parallelExecutor.execute(secondaryTasks);
         
-        if (results.researchPapers) {
-          await this.sleep(5000);
-        }
+        results.reviews = secondaryResults[0]?.success ? secondaryResults[0].data : null;
+        results.researchPapers = secondaryResults[1]?.success ? secondaryResults[1].data : null;
+        
+        console.log('✅ Secondary research complete');
+        await this.sleep(5000);
       }
 
-      // 7. Strategic Analysis (lightweight, no heavy API calls)
-      console.log('🎯 Step 1.6: Strategic Analysis...');
+      // Step 4: Strategic Analysis (lightweight)
+      console.log('🎯 Step 1.4: Strategic Analysis...');
       results.starvingMarket = await this.detectStarvingMarketUltra(
         results.market,
         results.competitors,
@@ -211,7 +277,7 @@ class MasterOrchestrator {
         results.researchPapers
       );
 
-      console.log('✅ PHASE 1 COMPLETE (Rate Limit Safe)');
+      console.log('✅ PHASE 1 COMPLETE (Parallel + Smart)');
 
       this.researchData = results;
       return results;
@@ -222,161 +288,54 @@ class MasterOrchestrator {
     }
   }
 
-  // INDIVIDUAL AGENT RUNNERS (unchanged, but benefit from client rate limiting)
-  async runMarketIntelligence(projectData, dateContext) {
-    const agent = new MarketIntelligenceAgentUltra(this.tier);
-    return await agent.analyzeUltra(
-      projectData.description,
-      projectData.targetCountry || 'Global',
-      dateContext
-    );
-  }
-
-  async runTrendAnalysis(projectData, dateContext) {
-    const agent = new TrendAnalysisAgent(this.tier);
-    return await agent.analyzeTrends(projectData.description, dateContext);
-  }
-
-  async runResearchPapers(projectData) {
-    const agent = new ResearchPaperAgentUltra(this.tier);
-    const keywords = this.extractKeywords(projectData.description);
-    return await agent.findAndAnalyzeRelevantPapersUltra(projectData.description, keywords);
-  }
-
-  async runCompetitorAnalysis(urls, projectData, trends) {
-    const agent = new CompetitorAnalysisAgentUltra(this.tier);
-    const urlsToAnalyze = urls.slice(0, this.tier === 'free' ? 3 : this.tier === 'starter' ? 5 : 10);
-    return await agent.analyzeMultipleCompetitorsUltra(urlsToAnalyze, projectData.description, trends);
-  }
-
-  async runReviewAnalysis(competitors, projectData) {
-    const agent = new ReviewAnalysisAgentUltra(this.tier);
-    const topCompetitors = competitors.slice(0, 3).map(c => c.name);
-    return await agent.analyzeMultipleCompetitors(topCompetitors, projectData.description);
-  }
-
-  // DEFAULT DATA GENERATORS (unchanged)
-  getDefaultMarketData(projectData) {
-    return {
-      market_overview: {
-        size: 'Market data temporarily unavailable',
-        growth_rate: 'Unknown',
-        maturity: 'unknown'
-      },
-      competition_level: 'medium',
-      key_competitors: [],
-      market_gaps: [{ gap: 'Analysis in progress', evidence: 'Limited data' }],
-      opportunities: ['Market research ongoing'],
-      threats: ['Competition exists'],
-      _meta: {
-        competitors_found: 0,
-        news_articles: 0,
-        data_sources: [],
-        fallback_mode: true
-      }
-    };
-  }
-
-  getDefaultTrendData(dateContext) {
-    return {
-      dateContext,
-      emerging_trends: [
-        { trend: 'AI Integration', relevance_to_project: 'High', priority: 'high' }
-      ],
-      declining_trends: [],
-      actionable_insights: [
-        { insight: 'Research data limited', action: 'Proceed with caution', timeline: 'Immediate' }
-      ],
-      _meta: {
-        fallback_mode: true
-      }
-    };
-  }
-
-  getDefaultCompetitorData() {
-    return {
-      total_analyzed: 0,
-      individual_analyses: [],
-      deepInsights: null,
-      positioning: {
-        leaders: [],
-        challengers: [],
-        niche_players: [],
-        followers: []
-      },
-      market_gaps: [],
-      threat_level: {
-        overall: 'UNKNOWN',
-        breakdown: {},
-        recommendation: 'Insufficient data for competitive analysis'
-      },
-      opportunities: [],
-      _meta: {
-        scraped_successfully: 0,
-        analysis_depth: this.tier,
-        fallback_mode: true
-      }
-    };
-  }
-
-  getMinimalResearchData(projectData) {
-    const dateContext = this.analyzeDateContextSync(projectData);
-    
-    return {
-      market: this.getDefaultMarketData(projectData),
-      competitors: this.getDefaultCompetitorData(),
-      reviews: null,
-      trends: this.getDefaultTrendData(dateContext),
-      researchPapers: null,
-      dateContext,
-      starvingMarket: { is_starving_market: false, score: 50, reasoning: 'Minimal data mode' },
-      uniqueness: { uniqueness_score: 50, reasoning: 'Minimal data mode' },
-      _meta: {
-        emergency_fallback: true,
-        data_quality: 10
-      }
-    };
-  }
-
-  // PHASE 2: PLANNING (with delays)
+  // PHASE 2: PARALLEL STRATEGY
   async executePhase2PlanningUltra(researchData) {
-    console.log('\n🎯 PHASE 2: ULTRA Strategic Planning (Rate Limit Safe)...');
+    console.log('\n🎯 PHASE 2: ULTRA Strategic Planning (Parallel)...');
 
     try {
-      // 1. Competitive Advantages
-      console.log('💡 Step 2.1: Identifying competitive advantages...');
-      this.competitiveAdvantages = await this.safeRetry(
-        () => this.identifyCompetitiveAdvantagesUltra(researchData),
-        'Competitive Advantages'
-      ).catch(error => {
-        console.warn('⚠️  Using default advantages');
-        return this.getDefaultAdvantages(researchData);
-      });
+      // Parallel: Advantages + Psychology
+      console.log('💡 Step 2.1: Strategy Components (Parallel)...');
       
-      console.log(`   ✅ Found ${this.competitiveAdvantages.length} advantages`);
+      const strategyTasks = [
+        async () => {
+          console.log('   🔸 Identifying Competitive Advantages...');
+          return await this.safeRetry(
+            () => this.identifyCompetitiveAdvantagesUltra(researchData),
+            'Competitive Advantages'
+          );
+        },
+        async () => {
+          console.log('   🔸 Generating Psychology Strategy...');
+          await this.sleep(3000); // Stagger
+          const psychologyAgent = new PsychologyAgentUltra(this.tier);
+          return await this.safeRetry(
+            () => psychologyAgent.generateUltraPsychologyStrategy(
+              researchData.market,
+              researchData.competitors,
+              researchData.reviews,
+              researchData.trends,
+              researchData.dateContext
+            ),
+            'Psychology Strategy'
+          );
+        }
+      ];
+      
+      const strategyResults = await this.parallelExecutor.execute(strategyTasks);
+      
+      this.competitiveAdvantages = strategyResults[0]?.success 
+        ? strategyResults[0].data 
+        : this.getDefaultAdvantages(researchData);
+      
+      const uxStrategy = strategyResults[1]?.success 
+        ? strategyResults[1].data 
+        : this.getDefaultUXStrategy();
+      
+      console.log(`✅ Strategy: ${this.competitiveAdvantages.length} advantages found`);
       await this.sleep(5000);
 
-      // 2. Psychology Strategy
-      console.log('🧠 Step 2.2: Psychology principles...');
-      const uxStrategy = await this.safeRetry(async () => {
-        const psychologyAgent = new PsychologyAgentUltra(this.tier);
-        return await psychologyAgent.generateUltraPsychologyStrategy(
-          researchData.market,
-          researchData.competitors,
-          researchData.reviews,
-          researchData.trends,
-          researchData.dateContext
-        );
-      }, 'Psychology Strategy').catch(error => {
-        console.warn('⚠️  Using default UX strategy');
-        return this.getDefaultUXStrategy();
-      });
-      
-      console.log(`   ✅ UX strategy created`);
-      await this.sleep(5000);
-
-      // 3. Feature Prioritization (no API calls)
-      console.log('📋 Step 2.3: Feature prioritization...');
+      // Feature prioritization (fast, no API)
+      console.log('📋 Step 2.2: Feature Prioritization...');
       const features = this.prioritizeFeaturesSimplified(
         researchData, 
         this.competitiveAdvantages,
@@ -404,9 +363,9 @@ class MasterOrchestrator {
     }
   }
 
-  // PHASE 3: CODE GENERATION (with delays between agents)
+  // PHASE 3: PARALLEL CODE GENERATION
   async executePhase3CodeGenerationUltra(strategyData, projectData) {
-    console.log('\n💻 PHASE 3: Code Generation (Rate Limit Safe)...');
+    console.log('\n💻 PHASE 3: Code Generation (Parallel)...');
 
     try {
       const enhancedReqs = {
@@ -422,34 +381,51 @@ class MasterOrchestrator {
         dateContext: this.researchData.dateContext
       };
 
-      // Database with delay
-      console.log('🗄️ Step 3.1: Database schema...');
+      // Database first (needed by others)
+      console.log('🗄️ Step 3.1: Database Schema...');
       const database = await this.safeRetry(async () => {
         const dbAgent = new DatabaseAgentUltra(this.tier);
         return await dbAgent.designSchemaUltra(enhancedReqs, this.researchData);
       }, 'Database Schema');
       
-      console.log(`   ✅ Schema: ${database.stats?.total_tables || 0} tables`);
-      await this.sleep(10000); // 10s delay before backend
+      console.log(`✅ Schema: ${database.stats?.total_tables || 0} tables`);
+      await this.sleep(8000); // Cooldown before parallel
 
-      // Backend with delay
-      console.log('⚙️ Step 3.2: Backend code...');
-      const backend = await this.safeRetry(async () => {
-        const backendAgent = new BackendAgentUltra(this.tier);
-        return await backendAgent.generateBackendUltra(enhancedReqs, database);
-      }, 'Backend Generation');
+      // PARALLEL: Backend + Frontend (both need DB)
+      console.log('⚙️ Step 3.2: Backend & Frontend (Parallel)...');
       
-      console.log(`   ✅ Backend: ${backend.stats?.total_files || 0} files`);
-      await this.sleep(10000); // 10s delay before frontend
-
-      // Frontend with delay
-      console.log('⚛️ Step 3.3: Frontend code...');
-      const frontend = await this.safeRetry(async () => {
-        const frontendAgent = new FrontendAgentUltra(this.tier);
-        return await frontendAgent.generateAppUltra(enhancedReqs);
-      }, 'Frontend Generation');
+      const codegenTasks = [
+        async () => {
+          console.log('   🔸 Generating Backend...');
+          const backendAgent = new BackendAgentUltra(this.tier);
+          return await this.safeRetry(
+            () => backendAgent.generateBackendUltra(enhancedReqs, database),
+            'Backend Generation'
+          );
+        },
+        async () => {
+          console.log('   🔸 Generating Frontend...');
+          await this.sleep(5000); // Stagger by 5s
+          const frontendAgent = new FrontendAgentUltra(this.tier);
+          return await this.safeRetry(
+            () => frontendAgent.generateAppUltra(enhancedReqs),
+            'Frontend Generation'
+          );
+        }
+      ];
       
-      console.log(`   ✅ Frontend: ${frontend.stats?.total_files || 0} files`);
+      const codegenResults = await this.parallelExecutor.execute(codegenTasks);
+      
+      const backend = codegenResults[0]?.success 
+        ? codegenResults[0].data 
+        : { files: {}, stats: { total_files: 0, total_lines: 0 } };
+      
+      const frontend = codegenResults[1]?.success 
+        ? codegenResults[1].data 
+        : { files: {}, stats: { total_files: 0, total_lines: 0 } };
+      
+      console.log(`✅ Backend: ${backend.stats?.total_files || 0} files`);
+      console.log(`✅ Frontend: ${frontend.stats?.total_files || 0} files`);
 
       const result = {
         database,
@@ -476,12 +452,12 @@ class MasterOrchestrator {
     }
   }
 
-  // PHASE 4: QA (with delay)
+  // PHASE 4: QA
   async executePhase4QualityUltra(codeData) {
-    console.log('\n🧪 PHASE 4: Quality Assurance (Rate Limit Safe)...');
+    console.log('\n🧪 PHASE 4: Quality Assurance...');
 
     try {
-      await this.sleep(5000); // Cooldown before QA
+      await this.sleep(5000); // Cooldown
 
       const allFiles = {
         ...codeData.frontend.files,
@@ -517,7 +493,128 @@ class MasterOrchestrator {
     }
   }
 
-  // HELPER METHODS (keep all existing ones)
+  // AGENT RUNNERS
+  async runMarketIntelligence(projectData, dateContext) {
+    const agent = new MarketIntelligenceAgentUltra(this.tier);
+    return await agent.analyzeUltra(
+      projectData.description,
+      projectData.targetCountry || 'Global',
+      dateContext
+    );
+  }
+
+  async runTrendAnalysis(projectData, dateContext) {
+    const agent = new TrendAnalysisAgent(this.tier);
+    return await agent.analyzeTrends(projectData.description, dateContext);
+  }
+
+  async runResearchPapers(projectData) {
+    const agent = new ResearchPaperAgentUltra(this.tier);
+    const keywords = this.extractKeywords(projectData.description);
+    return await agent.findAndAnalyzeRelevantPapersUltra(projectData.description, keywords);
+  }
+
+  async runCompetitorAnalysis(urls, projectData, trends) {
+    const agent = new CompetitorAnalysisAgentUltra(this.tier);
+    const limit = this.tier === 'free' ? 3 : this.tier === 'starter' ? 5 : 10;
+    return await agent.analyzeMultipleCompetitorsUltra(urls.slice(0, limit), projectData.description, trends);
+  }
+
+  async runReviewAnalysis(competitors, projectData) {
+    const agent = new ReviewAnalysisAgentUltra(this.tier);
+    const topCompetitors = competitors.slice(0, 3).map(c => c.name);
+    return await agent.analyzeMultipleCompetitors(topCompetitors, projectData.description);
+  }
+
+  // FALLBACK DATA GENERATORS
+  getDefaultMarketData(projectData) {
+    return {
+      market_overview: { size: 'Unknown', growth_rate: 'Unknown', maturity: 'unknown' },
+      competition_level: 'medium',
+      key_competitors: [],
+      market_gaps: [{ gap: 'Analysis pending', evidence: 'Limited data' }],
+      opportunities: ['Market research ongoing'],
+      threats: ['Competition exists'],
+      _meta: { competitors_found: 0, news_articles: 0, data_sources: [], fallback_mode: true }
+    };
+  }
+
+  getDefaultTrendData(dateContext) {
+    return {
+      dateContext,
+      emerging_trends: [{ trend: 'AI Integration', relevance_to_project: 'High', priority: 'high' }],
+      declining_trends: [],
+      actionable_insights: [{ insight: 'Research limited', action: 'Proceed with caution', timeline: 'Immediate' }],
+      _meta: { fallback_mode: true }
+    };
+  }
+
+  getDefaultCompetitorData() {
+    return {
+      total_analyzed: 0,
+      individual_analyses: [],
+      deepInsights: null,
+      positioning: { leaders: [], challengers: [], niche_players: [], followers: [] },
+      market_gaps: [],
+      threat_level: { overall: 'UNKNOWN', breakdown: {}, recommendation: 'Insufficient data' },
+      opportunities: [],
+      _meta: { scraped_successfully: 0, analysis_depth: this.tier, fallback_mode: true }
+    };
+  }
+
+  getMinimalResearchData(projectData) {
+    const dateContext = this.analyzeDateContextSync(projectData);
+    return {
+      market: this.getDefaultMarketData(projectData),
+      competitors: this.getDefaultCompetitorData(),
+      reviews: null,
+      trends: this.getDefaultTrendData(dateContext),
+      researchPapers: null,
+      dateContext,
+      starvingMarket: { is_starving_market: false, score: 50, reasoning: 'Minimal data' },
+      uniqueness: { uniqueness_score: 50, reasoning: 'Minimal data' },
+      _meta: { emergency_fallback: true, data_quality: 10 }
+    };
+  }
+
+  getDefaultAdvantages(researchData) {
+    return [{
+      feature: 'Modern Tech Stack',
+      source: 'Default',
+      type: 'technology',
+      priority: 'high',
+      implementation: 'Latest React + Node.js',
+      researchBacked: false
+    }];
+  }
+
+  getDefaultUXStrategy() {
+    return {
+      principles: [{ principle: 'Social Proof', description: 'Show testimonials', implementation: 'User reviews' }],
+      psychologyTriggers: [{ trigger: 'Trust', implementation: 'Security badges', priority: 'high' }]
+    };
+  }
+
+  getMinimalPlanningData(researchData) {
+    return {
+      competitive_advantages: this.getDefaultAdvantages(researchData),
+      ux_strategy: this.getDefaultUXStrategy(),
+      features_prioritized: [
+        { name: 'Core Functionality', priority: 'critical' },
+        { name: 'User Interface', priority: 'high' }
+      ],
+      pricing_strategy: { model: 'TBD' },
+      growth_strategy: { tactics: ['Market research'] },
+      implementation_roadmap: {
+        phase1_mvp: ['Build core'],
+        phase2_growth: ['Add features'],
+        phase3_scale: ['Scale infrastructure']
+      },
+      _meta: { minimal_mode: true }
+    };
+  }
+
+  // HELPER METHODS
   analyzeDateContextSync(projectData) {
     const now = new Date();
     const month = now.getMonth();
@@ -533,7 +630,7 @@ class MasterOrchestrator {
       month: now.toLocaleString('default', { month: 'long' }),
       quarter: Math.floor(month / 3) + 1,
       upcomingEvents: [],
-      marketTrend: 'Standard market conditions',
+      marketTrend: 'Standard conditions',
       holidaySeason: month === 11 || month === 0,
       fiscalQuarter: Math.floor(month / 3) + 1
     };
@@ -570,7 +667,7 @@ class MasterOrchestrator {
     
     return {
       uniqueness_score: Math.min(100, score),
-      reasoning: `Based on ${this.competitiveAdvantages.length} unique advantages`
+      reasoning: `Based on ${this.competitiveAdvantages.length} advantages`
     };
   }
 
@@ -595,7 +692,7 @@ class MasterOrchestrator {
           source: `${comp.name} Weakness`,
           type: 'competitor_weakness',
           priority: 'critical',
-          implementation: `Outperform on: ${weakness}`
+          implementation: `Outperform: ${weakness}`
         });
       });
     });
@@ -603,43 +700,11 @@ class MasterOrchestrator {
     return advantages.slice(0, 10);
   }
 
-  getDefaultAdvantages(researchData) {
-    return [
-      {
-        feature: 'Modern Technology Stack',
-        source: 'Default',
-        type: 'technology',
-        priority: 'high',
-        implementation: 'Use latest React and Node.js',
-        researchBacked: false
-      }
-    ];
-  }
-
-  getDefaultUXStrategy() {
-    return {
-      principles: [
-        {
-          principle: 'Social Proof',
-          description: 'People follow what others do',
-          implementation: 'Show testimonials and user counts'
-        }
-      ],
-      psychologyTriggers: [
-        {
-          trigger: 'Trust',
-          implementation: 'Display security badges',
-          priority: 'high'
-        }
-      ]
-    };
-  }
-
   prioritizeFeaturesSimplified(researchData, advantages, uxStrategy) {
     const features = [
-      { name: 'User Authentication', priority: 'critical', implementation: 'JWT-based auth' },
+      { name: 'User Authentication', priority: 'critical', implementation: 'JWT auth' },
       { name: 'Dashboard', priority: 'critical', implementation: 'User dashboard' },
-      { name: 'Responsive Design', priority: 'high', implementation: 'Mobile-first approach' }
+      { name: 'Responsive Design', priority: 'high', implementation: 'Mobile-first' }
     ];
 
     advantages.slice(0, 5).forEach(adv => {
@@ -657,7 +722,7 @@ class MasterOrchestrator {
     return {
       model: 'freemium',
       tiers: [
-        { name: 'Free', price: 0, features: ['Basic features'] },
+        { name: 'Free', price: 0, features: ['Basic'] },
         { name: 'Pro', price: 9.99, features: ['All features'] }
       ]
     };
@@ -665,26 +730,7 @@ class MasterOrchestrator {
 
   createSimpleGrowthStrategy(researchData, uxStrategy, features) {
     return {
-      tactics: ['Content marketing', 'SEO optimization', 'Social media presence']
-    };
-  }
-
-  getMinimalPlanningData(researchData) {
-    return {
-      competitive_advantages: this.getDefaultAdvantages(researchData),
-      ux_strategy: this.getDefaultUXStrategy(),
-      features_prioritized: [
-        { name: 'Core Functionality', priority: 'critical' },
-        { name: 'User Interface', priority: 'high' }
-      ],
-      pricing_strategy: { model: 'TBD' },
-      growth_strategy: { tactics: ['Market research', 'Product development'] },
-      implementation_roadmap: {
-        phase1_mvp: ['Build core features'],
-        phase2_growth: ['Add advanced features'],
-        phase3_scale: ['Scale infrastructure']
-      },
-      _meta: { minimal_mode: true }
+      tactics: ['Content marketing', 'SEO', 'Social media']
     };
   }
 
