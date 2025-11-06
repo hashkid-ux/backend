@@ -8,7 +8,7 @@ class CompetitorAnalysisAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
     this.maxCompetitors = tier === 'free' ? 5 : tier === 'starter' ? 10 : 20;
   }
@@ -66,7 +66,20 @@ class CompetitorAnalysisAgentUltra {
 
     console.log(`🤖 AI analyzing: ${data.url}`);
 
-    const prompt = `You are an expert competitive intelligence analyst. Analyze this competitor DEEPLY.
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    
+    const prompt = jsonInstructions +`You are an expert competitive intelligence analyst. Analyze this competitor DEEPLY.
 
 BUSINESS IDEA CONTEXT: ${ideaContext}
 
@@ -210,7 +223,19 @@ BE SPECIFIC. USE EVIDENCE. NO GENERIC ANSWERS.`;
   async generateDeepInsights(analyses, ideaContext, trends) {
     console.log('🧠 Generating deep competitive insights...');
 
-    const prompt = `You are a strategic business consultant. Generate ULTRA-DEEP insights from this competitive analysis.
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`You are a strategic business consultant. Generate ULTRA-DEEP insights from this competitive analysis.
 
 BUSINESS IDEA: ${ideaContext}
 

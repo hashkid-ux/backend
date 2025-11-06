@@ -1,12 +1,103 @@
 // backend/services/database.js
 // Complete Database Service Layer with Prisma
 
+
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
 });
 
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
+/**
+ * Calculate total size of files object
+ * @param {Object} files - Files object with file paths as keys and content as values
+ * @returns {number} Total size in bytes
+ */
+function calculateTotalSize(files) {
+  if (!files || typeof files !== 'object') {
+    return 0;
+  }
+  
+  return Object.values(files).reduce((total, content) => {
+    if (!content) return total;
+    
+    // Handle string content
+    if (typeof content === 'string') {
+      return total + content.length;
+    }
+    
+    // Handle nested objects (like phase3 with frontend/backend)
+    if (typeof content === 'object') {
+      if (content.files) {
+        return total + calculateTotalSize(content.files);
+      }
+      return total + JSON.stringify(content).length;
+    }
+    
+    return total;
+  }, 0);
+}
+
+/**
+ * Extract file count from phase3 data
+ * @param {Object} phase3 - Phase 3 build data
+ * @returns {Object} File counts by category
+ */
+function extractFileCounts(phase3) {
+  if (!phase3) {
+    return { frontend_files: 0, backend_files: 0, database_migrations: 0 };
+  }
+  
+  return {
+    frontend_files: Object.keys(phase3.frontend?.files || {}).length,
+    backend_files: Object.keys(phase3.backend?.files || {}).length,
+    database_migrations: phase3.database?.migrations?.length || 0
+  };
+}
+
+/**
+ * Safely merge files from multiple sources
+ * @param  {...Object} sources - File objects to merge
+ * @returns {Object} Merged files object
+ */
+function mergeFiles(...sources) {
+  const merged = {};
+  
+  for (const source of sources) {
+    if (source && typeof source === 'object') {
+      Object.assign(merged, source);
+    }
+  }
+  
+  return merged;
+}
+
+/**
+ * Validate and sanitize project data before database save
+ * @param {Object} data - Project data to validate
+ * @returns {Object} Sanitized data
+ */
+function sanitizeProjectData(data) {
+  const sanitized = { ...data };
+  
+  // Ensure JSON fields are valid objects
+  const jsonFields = ['generatedFiles', 'researchData', 'competitorData', 'buildData', 'fileStats'];
+  
+  jsonFields.forEach(field => {
+    if (sanitized[field] !== undefined && sanitized[field] !== null) {
+      if (typeof sanitized[field] !== 'object') {
+        console.warn(`⚠️ ${field} is not an object, converting...`);
+        sanitized[field] = {};
+      }
+    }
+  });
+  
+  return sanitized;
+}
 
 // ==========================================
 // CONNECTION MANAGEMENT
@@ -27,6 +118,7 @@ async function disconnectDatabase() {
   await prisma.$disconnect();
   console.log('🔌 Database disconnected');
 }
+
 
 // ==========================================
 // USER OPERATIONS
@@ -171,70 +263,74 @@ const UserService = {
 // ==========================================
 
 const ProjectService = {
-  // Create project
-  async create(data) {
+  // CREATE PROJECT - ADD THIS METHOD
+   async create(data) {
+    const sanitized = sanitizeProjectData(data);
+    
     return await prisma.project.create({
       data: {
-        ...data,
-        status: 'building',
-        buildProgress: 0
+        ...sanitized,
+        createdAt: new Date()
       }
     });
   },
-
-  // Update project
-  async update(id, data) {
+  // Update to accept and store ALL data
+    async update(id, data) {
+    const sanitized = sanitizeProjectData(data);
+    
     return await prisma.project.update({
       where: { id },
       data: {
-        ...data,
+        ...sanitized,
         updatedAt: new Date()
       }
     });
   },
-
-  // Mark as completed
-  async markCompleted(id, buildData) {
-    return await prisma.project.update({
-      where: { id },
-      data: {
-        status: 'completed',
-        buildProgress: 100,
-        completedAt: new Date(),
-        buildData,
-        qaScore: buildData.qa_results?.overall_score,
-        deploymentReady: buildData.deployment_ready
-      }
-    });
-  },
-
-  // Get user projects
-  async getUserProjects(userId, limit = 10) {
-    return await prisma.project.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: limit
-    });
-  },
-
-  // Get project by ID
-  async findById(id) {
+  
+  // Get project WITH ALL DATA
+   async findById(id) {
     return await prisma.project.findUnique({
       where: { id },
       include: {
         user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            tier: true
-          }
+          select: { id: true, email: true, name: true, tier: true }
         }
       }
     });
   },
-
-  // Delete project
+  
+  // Get projects with files for dashboard
+   async getUserProjects(userId, limit = 10) {
+    return await prisma.project.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        status: true,
+        buildProgress: true,
+        filesGenerated: true,
+        linesOfCode: true,
+        qaScore: true,
+        deploymentReady: true,
+        downloadUrl: true,
+        generatedFiles: true,  // CRITICAL
+        fileStats: true,
+        researchData: true,    // CRITICAL
+        competitorData: true,  // CRITICAL
+        buildData: true,       // CRITICAL
+        framework: true,
+        database: true,
+        createdAt: true,
+        completedAt: true,
+        downloadedAt: true
+      }
+    });
+  },
+  
+  // DELETE PROJECT
   async delete(id) {
     return await prisma.project.delete({
       where: { id }
@@ -461,21 +557,22 @@ const AnalyticsService = {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    return await prisma.userAnalytics.upsert({
-      where: {
-        userId_date: {
-          userId,
-          date: today
-        }
-      },
-      update: data,
-      create: {
-        userId,
-        date: today,
-        ...data
-      }
-    });
-  },
+    // Transform increment operations for create
+  const createData = Object.entries(data).reduce((acc, [key, value]) => {
+    if (typeof value === 'object' && value.increment !== undefined) {
+      acc[key] = value.increment;
+    } else {
+      acc[key] = value;
+    }
+    return acc;
+  }, { userId, date: today });
+
+  return await prisma.userAnalytics.upsert({
+    where: { userId_date: { userId, date: today } },
+    update: data,
+    create: createData
+  });
+},
 
   // Get user analytics
   async getUserAnalytics(userId, days = 30) {
@@ -677,5 +774,10 @@ module.exports = {
   SessionService,
   VerificationCodeService,
   ActivityLogService,
-  runCleanupJobs
+  runCleanupJobs,
+  // Helper functions
+  calculateTotalSize,
+  extractFileCounts,
+  mergeFiles,
+  sanitizeProjectData
 };

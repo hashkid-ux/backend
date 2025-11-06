@@ -7,7 +7,7 @@ class QAAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'minimax/minimax-m2:free';
   }
 
   async testGeneratedCodeUltra(allFiles, projectData) {
@@ -34,20 +34,31 @@ class QAAgentUltra {
     
     // AUTO-FIX if enabled and issues found
     if (projectData.autoFix !== false && results.critical_issues.length > 0) {
-      console.log('🔧 Auto-fixing critical issues...');
-      const fixedFiles = await this.autoFixIssues(allFiles, results.critical_issues, projectData);
+  console.log(`🔧 Auto-fixing ${results.critical_issues.length} critical issues...`);
+  
+  // CHANGE THIS: Try up to 3 times
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const fixedFiles = await this.autoFixIssues(allFiles, results.critical_issues, projectData);
+    
+    if (fixedFiles) {
+      const retest = await this.retestFiles(fixedFiles);
       
-      if (fixedFiles) {
-        // Re-test to verify fixes
-        const retest = await this.retestFiles(fixedFiles);
-        if (retest.overall_score > results.overall_score) {
-          results.autoFixedIssues = results.critical_issues.length;
-          results.overall_score = retest.overall_score;
-          results.critical_issues = retest.critical_issues;
-          console.log(`✅ Auto-fixed ${results.autoFixedIssues} issues`);
-        }
+      if (retest.overall_score > results.overall_score) {
+        results.autoFixedIssues = results.critical_issues.length;
+        results.overall_score = retest.overall_score;
+        results.critical_issues = retest.critical_issues;
+        console.log(`✅ Auto-fixed on attempt ${attempt}`);
+        break;
       }
     }
+    
+    if (attempt < 3) {
+      console.log(`⏳ Retry ${attempt + 1}/3...`);
+      await new Promise(resolve => setTimeout(resolve, 3000)); 
+    }
+  }
+}
+
     
     // Generate recommendations
     results.recommendations = this.generateRecommendations(results);
@@ -605,7 +616,19 @@ class QAAgentUltra {
   async autoFixIssues(files, issues, projectData) {
     console.log(`🔧 Auto-fixing ${issues.length} critical issues...`);
 
-    const prompt = `Fix these CRITICAL issues in the codebase:
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+
+    const prompt = jsonInstructions +`Fix these CRITICAL issues in the codebase:
 
 ISSUES:
 ${issues.map((issue, i) => `${i + 1}. [${issue.file}] ${issue.message} - ${issue.fix || 'Fix required'}`).join('\n')}

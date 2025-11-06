@@ -10,7 +10,7 @@ class PostDeploymentMonitor {
     this.tier = tier;
     this.projectId = projectId;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
     this.monitoringSchedule = this.getMonitoringSchedule(tier);
   }

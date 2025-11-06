@@ -8,7 +8,7 @@ class MarketIntelligenceAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
     this.maxCompetitors = tier === 'free' ? 5 : tier === 'starter' ? 10 : 20;
     this.maxRetries = 3;
@@ -122,7 +122,20 @@ class MarketIntelligenceAgentUltra {
   }
 
   async tryComprehensiveSynthesis(idea, country, competitors, trends, industryData, dateContext) {
-    const prompt = `You are a market research expert. Analyze this business idea with comprehensive insights.
+    
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`You are a market research expert. Analyze this business idea with comprehensive insights.
 
 **CRITICAL INSTRUCTIONS:**
 1. Return ONLY valid JSON - no markdown, no explanations, no code blocks
@@ -197,7 +210,20 @@ Return this EXACT JSON structure:
   }
 
   async tryMediumSynthesis(idea, competitors, trends, dateContext) {
-    const prompt = `Analyze this business idea. Return ONLY valid JSON, no markdown.
+    
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`Analyze this business idea. Return ONLY valid JSON, no markdown.
 
 IDEA: ${idea}
 COMPETITORS: ${competitors.length} found

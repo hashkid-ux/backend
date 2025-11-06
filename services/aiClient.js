@@ -11,6 +11,7 @@ class APIKeyManager extends EventEmitter {
     
     this.keys = this.parseKeys(apiKeysString);
     this.currentIndex = 0;
+    this.lastHealthState = '';
     
     // Enhanced key tracking with FIXED success tracking
     this.keyHealth = this.keys.map((key, index) => ({
@@ -126,6 +127,20 @@ class APIKeyManager extends EventEmitter {
   async getNextAvailableKey() {
     const now = Date.now();
     const totalKeys = this.keys.length;
+
+    // ← ADD: Emergency brake
+  const availableKeys = this.keyHealth.filter(k => 
+    k.isHealthy && 
+    k.rateLimitedUntil < now &&
+    k.requestsInLastMinute < k.estimatedCapacity * 0.8
+  );
+  
+  if (availableKeys.length === 0) {
+    console.warn('⚠️ ALL KEYS EXHAUSTED - forcing 300s cooldown');
+    await this.sleep(300000);
+    // Reset counters
+    this.keyHealth.forEach(k => k.requestsInLastMinute = 0);
+  }
     
     // CRITICAL: Global rate limiting across ALL keys
     const timeSinceGlobalRequest = now - this.globalLastRequestTime;
@@ -330,39 +345,44 @@ class APIKeyManager extends EventEmitter {
   }
 
   performHealthCheck() {
-    const now = Date.now();
-    let healthyKeys = 0;
-    let rateLimitedKeys = 0;
-    let unhealthyKeys = 0;
-    
-    this.keyHealth.forEach(key => {
-      // Auto-recover from rate limits
-      if (key.rateLimitedUntil > 0 && key.rateLimitedUntil < now) {
-        key.rateLimitedUntil = 0;
-        key.consecutiveRateLimits = 0;
-        console.log(`🔄 Key ${key.id} recovered from rate limit`);
-      }
-      
-      // Auto-recover from errors after 5 minutes
-      if (!key.isHealthy && now - key.lastRequestTime > 300000) {
-        key.isHealthy = true;
-        key.consecutiveErrors = 0;
-        console.log(`🔄 Key ${key.id} auto-recovered from errors`);
-      }
-      
-      // Count
-      if (key.rateLimitedUntil > now) rateLimitedKeys++;
-      else if (!key.isHealthy) unhealthyKeys++;
-      else healthyKeys++;
-    });
-    
-    console.log(`📊 Health Check: ${healthyKeys} healthy, ${rateLimitedKeys} rate limited, ${unhealthyKeys} unhealthy`);
-    
-    if (healthyKeys === 0 && rateLimitedKeys === 0) {
-      console.error('🚨 CRITICAL: No healthy keys available!');
-      this.emit('allKeysUnhealthy');
+  const now = Date.now();
+  let healthyKeys = 0;
+  let rateLimitedKeys = 0;
+  let unhealthyKeys = 0;
+  
+  this.keyHealth.forEach(key => {
+    // Auto-recover from rate limits
+    if (key.rateLimitedUntil > 0 && key.rateLimitedUntil < now) {
+      key.rateLimitedUntil = 0;
+      key.consecutiveRateLimits = 0;
+      console.log(`🔄 Key ${key.id} recovered from rate limit`);
     }
+    
+    // Auto-recover from errors after 5 minutes
+    if (!key.isHealthy && now - key.lastRequestTime > 300000) {
+      key.isHealthy = true;
+      key.consecutiveErrors = 0;
+      console.log(`🔄 Key ${key.id} auto-recovered from errors`);
+    }
+    
+    // Count
+    if (key.rateLimitedUntil > now) rateLimitedKeys++;
+    else if (!key.isHealthy) unhealthyKeys++;
+    else healthyKeys++;
+  });
+  
+  // CRITICAL FIX: Only log if state changed
+  const currentState = `${healthyKeys}-${rateLimitedKeys}-${unhealthyKeys}`;
+  if (this.lastHealthState !== currentState) {
+    console.log(`📊 Health Check: ${healthyKeys} healthy, ${rateLimitedKeys} rate limited, ${unhealthyKeys} unhealthy`);
+    this.lastHealthState = currentState;
   }
+  
+  if (healthyKeys === 0 && rateLimitedKeys === 0) {
+    console.error('🚨 CRITICAL: No healthy keys available!');
+    this.emit('allKeysUnhealthy');
+  }
+}
 
   logKeyStatus() {
     console.log('📊 Key Status:');
@@ -407,7 +427,7 @@ class AIClient {
     );
     
     this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     
     // Global settings
     this.maxRetries = 22; // Keep for compatibility

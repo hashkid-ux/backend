@@ -8,7 +8,10 @@ const {
   UserService, 
   NotificationService,
   AnalyticsService,
-  ActivityLogService 
+  ActivityLogService,
+  calculateTotalSize,  // CRITICAL FIX: Import helper
+  extractFileCounts,
+  mergeFiles
 } = require('../services/database');
 const EmailService = require('../services/emailService');
 const { authenticateToken } = require('./authWithDb');
@@ -55,7 +58,13 @@ router.post('/', authenticateToken, async (req, res) => {
       prompt: prompt || description,
       framework: framework || 'react',
       database: database || 'postgresql',
-      targetPlatform: targetPlatform || 'web'
+      targetPlatform: targetPlatform || 'web',
+      // CRITICAL: Store research request
+    researchData: {
+      requested: true,
+      targetCountry: req.body.targetCountry,
+      features: req.body.features
+    }
     });
 
     // Create notification
@@ -145,9 +154,19 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
+    // Validate data structure
+    const validatedProject = {
+      ...project,
+      generatedFiles: project.generatedFiles || {},
+      researchData: project.researchData || null,
+      competitorData: project.competitorData || null,
+      buildData: project.buildData || null,
+      fileStats: project.fileStats || { total_files: 0, total_size: 0 }
+    };
+
     res.json({
       success: true,
-      project
+      project: validatedProject
     });
 
   } catch (error) {
@@ -206,7 +225,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
 router.post('/:id/complete', authenticateToken, async (req, res) => {
   try {
-    const { buildData } = req.body;
+    const { buildData, phase1, phase2, phase3, phase4 } = req.body;
 
     const project = await ProjectService.findById(req.params.id);
 
@@ -219,8 +238,78 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // Mark completed
-    const completed = await ProjectService.markCompleted(req.params.id, buildData);
+    // CRITICAL FIX: Safely merge all files
+    const allGeneratedFiles = mergeFiles(
+      phase3?.frontend?.files,
+      phase3?.backend?.files
+    );
+
+      // Calculate file stats
+    const fileCounts = extractFileCounts(phase3);
+    const totalSize = calculateTotalSize(phase3);
+
+    // Build complete update data
+    const updateData = {
+      status: 'completed',
+      buildProgress: 100,
+      completedAt: new Date(),
+      filesGenerated: buildData?.summary?.files_generated || fileCounts.frontend_files + fileCounts.backend_files,
+      linesOfCode: buildData?.summary?.lines_of_code || 0,
+      qaScore: buildData?.summary?.qa_score || phase4?.qa_results?.overall_score || 0,
+      deploymentReady: buildData?.summary?.deployment_ready || phase4?.deployment_ready || false,
+      downloadUrl: buildData?.download_url || buildData?.downloadUrl,
+      
+      // FULL RESEARCH DATA (Phase 1)
+      researchData: phase1 || {
+        market: null,
+        competitors: null,
+        reviews: null,
+        trends: null,
+        dateContext: null,
+        _fullData: {}
+      },
+      
+      // COMPETITOR DATA (Phase 2)
+      competitorData: phase2 || {
+        competitive_advantages: [],
+        ux_strategy: {},
+        features_prioritized: []
+      },
+      
+      // ALL GENERATED FILES
+      generatedFiles: allGeneratedFiles,
+      
+      // FILE METADATA
+      fileStats: {
+        frontend_files: fileCounts.frontend_files,
+        backend_files: fileCounts.backend_files,
+        database_migrations: fileCounts.database_migrations,
+        total_size: totalSize,
+        total_files: fileCounts.frontend_files + fileCounts.backend_files + fileCounts.database_migrations
+      },
+      
+      // COMPLETE BUILD DATA
+      buildData: {
+        build_id: buildData?.build_id,
+        project_id: buildData?.project_id,
+        summary: buildData?.summary || {
+          files_generated: fileCounts.frontend_files + fileCounts.backend_files,
+          lines_of_code: 0,
+          competitors_analyzed: phase1?.competitors?.total_analyzed || 0,
+          reviews_scanned: phase1?.reviews?.totalReviewsAnalyzed || 0
+        },
+        phases: {
+          phase1: phase1,
+          phase2: phase2,
+          phase3: phase3,
+          phase4: phase4
+        },
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    // Update project
+    const completed = await ProjectService.update(req.params.id, updateData);
 
     // Create notification
     await NotificationService.create(req.user.id, {
@@ -240,7 +329,11 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
     // Send email notification
     const user = await UserService.findById(req.user.id);
     const downloadUrl = `${process.env.FRONTEND_URL}/projects/${project.id}/download`;
-    EmailService.sendBuildComplete(user.email, user.name, project.name, downloadUrl);
+    
+    if (EmailService && EmailService.sendBuildComplete) {
+      EmailService.sendBuildComplete(user.email, user.name, project.name, downloadUrl)
+        .catch(err => console.warn('Email notification failed:', err));
+    }
 
     // Log activity
     await ActivityLogService.log({
@@ -251,6 +344,16 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
       description: `Completed building "${project.name}"`
     });
 
+    console.log('✅ Project completed and saved to database:', {
+      id: project.id,
+      filesGenerated: updateData.filesGenerated,
+      linesOfCode: updateData.linesOfCode,
+      totalSize: updateData.fileStats.total_size,
+      hasResearchData: !!updateData.researchData,
+      hasCompetitorData: !!updateData.competitorData,
+      hasGeneratedFiles: Object.keys(updateData.generatedFiles).length > 0
+    });
+
     res.json({
       success: true,
       project: completed
@@ -258,7 +361,10 @@ router.post('/:id/complete', authenticateToken, async (req, res) => {
 
   } catch (error) {
     console.error('Complete project error:', error);
-    res.status(500).json({ error: 'Failed to complete project' });
+    res.status(500).json({ 
+      error: 'Failed to complete project',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

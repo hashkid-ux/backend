@@ -49,6 +49,7 @@ model User {
   // Metadata
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  startedAt        DateTime?   // ADD THIS LINE
   lastLoginAt       DateTime?
   isActive          Boolean   @default(true)
   isBanned          Boolean   @default(false)
@@ -99,39 +100,45 @@ model Project {
   description      String   @db.Text
   prompt           String   @db.Text
   
-  // Generated Assets
+  // CRITICAL: Store ALL files as JSON
+  generatedFiles   Json?    // { "src/App.js": "...", "server.js": "..." }
+  fileStats        Json?    // { frontend_files: 10, backend_files: 8, total_size: 500000 }
+  lastFileUpdate   DateTime?
+  
+  // FULL RESEARCH DATA
+  researchData     Json?    // Phase 1: Market, competitors found, trends
+  competitorData   Json?    // Phase 2: Analyzed competitors, advantages, strategy
+  buildData        Json?    // Complete build results including all phases
+  
+  // Build metadata
   filesGenerated   Int      @default(0)
   linesOfCode      Int      @default(0)
-  downloadUrl      String?
-  deploymentUrl    String?
-  
-  // Status
-  status           String   @default("building") // 'building', 'completed', 'failed', 'deployed'
-  buildProgress    Int      @default(0)
-  
-  // QA Results
   qaScore          Int?
   deploymentReady  Boolean  @default(false)
   
-  // Build Data (JSON)
-  buildData        Json?    // Stores full build results
-  researchData     Json?    // Market research
-  competitorData   Json?    // Competitor analysis
+  // Status
+  status           String   @default("building")
+  buildProgress    Int      @default(0)
   
-  // Tech Stack
-  framework        String?  // 'react', 'nextjs'
-  database         String?  // 'postgresql', 'mongodb'
-  targetPlatform   String?  // 'web', 'mobile', 'both'
+  // URLs
+  downloadUrl      String?
+  deploymentUrl    String?
   
-  // Metadata
+  // Tech stack
+  framework        String?
+  database         String?
+  targetPlatform   String?
+  
+  // Relationships
   userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
   createdAt        DateTime @default(now())
+  startedAt        DateTime?  
   updatedAt        DateTime @updatedAt
   completedAt      DateTime?
   downloadedAt     DateTime?
-  
-  // Relations
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId])
   @@index([status])

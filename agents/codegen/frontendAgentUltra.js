@@ -7,7 +7,7 @@ class FrontendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'minimax/minimax-m2:free';
     this.maxRetries = 3;
   }
 
@@ -92,7 +92,19 @@ class FrontendAgentUltra {
       dateContext
     } = projectData;
 
-    const prompt = `You are an expert React architect. Plan a PRODUCTION-READY architecture.
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+
+    const prompt = jsonInstructions +`You are an expert React architect. Plan a PRODUCTION-READY architecture.
 
 PROJECT: ${projectName}
 DESCRIPTION: ${description}
@@ -275,18 +287,24 @@ Generate complete App.js with:
 - Loading states
 - Responsive navigation
 
-Return ONLY the complete JavaScript code, no markdown, no explanations.`;
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations, NO comments outside code
+3. Use functional components with React hooks
+
+Generate the complete component now.`;
+
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 3000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     let code = response.content[0].text;
     
-    // Clean up markdown if present
-    code = code.replace(/```(?:javascript|jsx|js)?\n?/g, '').replace(/```\n?$/g, '');
+    // AGGRESSIVE CLEANING - Apply BEFORE any processing
+    code = this.aggressiveClean(code);
     
     return code.trim();
   }
@@ -311,13 +329,19 @@ Generate complete ${pageConfig.name}.jsx with:
 - SEO meta tags (react-helmet if needed)
 
 Make it VISUALLY STUNNING with:
-- Gradient backgrounds
 - Smooth animations
 - Micro-interactions
 - Modern UI patterns
 - Call-to-action buttons with psychology
 
-Return ONLY the complete JavaScript code, no markdown.`;
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations, NO comments outside code
+3. Use functional components with React hooks
+4. Start with: function ${pageConfig.name}() {
+5. End with: export default ${pageConfig.name};
+
+Generate the complete component now.`;
 
     const response = await this.client.messages.create({
       model: this.model,
@@ -326,10 +350,50 @@ Return ONLY the complete JavaScript code, no markdown.`;
     });
 
     let code = response.content[0].text;
-    code = code.replace(/```(?:javascript|jsx|js)?\n?/g, '').replace(/```\n?$/g, '');
-    
-    return code.trim();
+
+     // AGGRESSIVE CLEANING - Apply BEFORE any processing
+    code = this.aggressiveClean(code);
+  
+  return code.trim();
   }
+
+  // Add this NEW method to the class
+aggressiveClean(code) {
+  if (!code) return '';
+  
+  // Step 1: Remove ALL non-code artifacts
+  let cleaned = code
+    // Remove markdown blocks
+    .replace(/```[\w]*\n?/g, '')
+    .replace(/```\s*$/g, '')
+    
+    // Remove tokenization artifacts (CRITICAL)
+    .replace(/<\|.*?\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|start_header_id\|/gi, '')
+    .replace(/\|end_header_id\|/gi, '')
+    .replace(/[｜▁]/g, '')
+    
+    // Remove BOM and invisible characters
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    
+    // Remove triple+ newlines
+    .replace(/\n{3,}/g, '\n\n')
+    
+    .trim();
+  
+  // Step 2: Validate it's actually code
+  if (cleaned.length < 20) return '';
+  if (!cleaned.includes('function') && !cleaned.includes('const')) return '';
+  if (cleaned.includes('｜') || cleaned.includes('▁')) {
+    console.error('❌ CONTAMINATED CODE DETECTED - Using fallback');
+    return '';
+  }
+  
+  return cleaned;
+}
 
   async generateComponent(componentConfig, projectData) {
     const prompt = `Generate a PRODUCTION-READY React component.

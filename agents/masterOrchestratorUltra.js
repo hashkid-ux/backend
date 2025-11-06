@@ -50,48 +50,74 @@ class MasterOrchestrator {
 
   // ENHANCED: Retry with better error handling and delays
   async safeRetry(fn, context, maxRetries = this.maxRetries) {
-    let attempt = 0;
-    let lastError = null;
+  let attempt = 0;
+  let lastError = null;
 
-    while (attempt < maxRetries) {
-      try {
-        attempt++;
-        console.log(`🔄 ${context} - Attempt ${attempt}/${maxRetries}`);
-        
-        const result = await fn();
-        
-        // Success - cooldown before next operation
-        await this.sleep(this.taskDelay);
-        return result;
-        
-      } catch (error) {
-        lastError = error;
-        
-        const errorMsg = error.message?.toLowerCase() || '';
-        const isRateLimit = errorMsg.includes('429') || 
-                           errorMsg.includes('rate limit') ||
-                           errorMsg.includes('too many requests');
-        
-        if (isRateLimit) {
-          const waitTime = 30000 * attempt; // 30s, 60s
-          console.error(`❌ ${context} - Rate limit hit`);
-          console.log(`⏳ Cooling down ${waitTime/1000}s...`);
-          await this.sleep(waitTime);
-        } else {
-          const waitTime = 10000 * attempt; // 10s, 20s
-          console.error(`❌ ${context} - Error: ${error.message?.substring(0, 100)}`);
-          
-          if (attempt < maxRetries) {
-            console.log(`⏳ Retrying in ${waitTime/1000}s...`);
-            await this.sleep(waitTime);
-          }
-        }
+  while (attempt < maxRetries) {
+    try {
+      attempt++;
+      console.log(`🔄 ${context} - Attempt ${attempt}/${maxRetries}`);
+      
+      const result = await fn();
+      
+      // VALIDATION: Check if result is valid
+      if (result === null || result === undefined) {
+        throw new Error('Null result returned');
+      }
+      
+      // SUCCESS
+      await this.sleep(this.taskDelay);
+      return result;
+      
+    } catch (error) {
+      lastError = error;
+      
+      const errorMsg = error.message?.toLowerCase() || '';
+      
+      // JSON parse errors - retry immediately
+      if (errorMsg.includes('json') || errorMsg.includes('parse')) {
+        console.error(`❌ ${context} - JSON error: ${error.message.substring(0, 100)}`);
+        await this.sleep(2000);
+        continue;
+      }
+      
+      // Rate limits - longer wait
+      const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit');
+      if (isRateLimit) {
+        const waitTime = 30000 * attempt;
+        console.error(`❌ ${context} - Rate limit hit`);
+        console.log(`⏳ Cooling down ${waitTime/1000}s...`);
+        await this.sleep(waitTime);
+        continue;
+      }
+      
+      // Other errors
+      const waitTime = 10000 * attempt;
+      console.error(`❌ ${context} - Error: ${error.message?.substring(0, 100)}`);
+      
+      if (attempt < maxRetries) {
+        console.log(`⏳ Retrying in ${waitTime/1000}s...`);
+        await this.sleep(waitTime);
       }
     }
-
-    console.error(`❌ ${context} failed after ${maxRetries} attempts`);
-    throw new Error(`${context} failed: ${lastError?.message}`);
   }
+
+  // ALL RETRIES FAILED - Return safe defaults instead of crashing
+  console.error(`❌ ${context} failed after ${maxRetries} attempts - using fallback`);
+  
+  // Context-specific fallbacks
+  if (context.includes('Market Intelligence')) {
+    return this.getDefaultMarketData({});
+  }
+  if (context.includes('Trend Analysis')) {
+    return this.getDefaultTrendData(this.analyzeDateContextSync({}));
+  }
+  if (context.includes('Competitor Analysis')) {
+    return this.getDefaultCompetitorData();
+  }
+  
+  throw new Error(`${context} failed: ${lastError?.message}`);
+}
 
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -99,135 +125,166 @@ class MasterOrchestrator {
 
   // PHASE 1: SEQUENTIAL RESEARCH with proper delays
   async executePhase1ResearchUltra(projectData) {
-    console.log('\n📊 PHASE 1: ULTRA Market Research (Sequential + Safe)...');
+  console.log('\n📊 PHASE 1: ULTRA Market Research (Sequential + Safe)...');
+  
+  const results = {
+    market: null,
+    competitors: null,
+    reviews: null,
+    trends: null,
+    researchPapers: null,
+    dateContext: null,
+    starvingMarket: null,
+    uniqueness: null,
     
-    const results = {
-      market: null,
-      competitors: null,
-      reviews: null,
-      trends: null,
-      researchPapers: null,
-      dateContext: null,
-      starvingMarket: null,
-      uniqueness: null
+    // CRITICAL FIX: Initialize _fullData as empty object
+    _fullData: {
+      market_overview: null,
+      competition_level: null,
+      market_gaps: [],
+      competitor_urls: [],
+      competitor_analyses: [],
+      review_summary: null,
+      trend_list: [],
+      papers_found: 0
+    }
+  };
+
+  try {
+    // Step 0: Date context (instant, no API)
+    console.log('📅 Step 1.0: Date & Trend Context...');
+    results.dateContext = this.analyzeDateContextSync(projectData);
+    await this.sleep(1000);
+
+    // Step 1: Market Intelligence
+    console.log('🔍 Step 1.1: Market Intelligence...');
+    const marketData = await this.safeRetry(
+      () => this.runMarketIntelligence(projectData, results.dateContext),
+      'Market Intelligence'
+    ).catch(error => {
+      console.warn('⚠️ Market intelligence failed, using default');
+      return this.getDefaultMarketData(projectData);
+    });
+    
+    results.market = marketData;
+    console.log(`✅ Market: ${results.market.competition_level || 'unknown'} competition`);
+    await this.sleep(this.phaseDelay);
+
+    // Step 2: Trend Analysis
+    console.log('📈 Step 1.2: Trend Analysis...');
+    const trendData = await this.safeRetry(
+      () => this.runTrendAnalysis(projectData, results.dateContext),
+      'Trend Analysis'
+    ).catch(error => {
+      console.warn('⚠️ Trend analysis failed, using default');
+      return this.getDefaultTrendData(results.dateContext);
+    });
+    
+    results.trends = trendData;
+    console.log(`✅ Trends: ${results.trends.emerging_trends?.length || 0} identified`);
+    await this.sleep(this.phaseDelay);
+
+    // Step 3: Competitor Analysis
+    if (marketData?._meta?.data_sources?.length > 0) {
+      console.log('🏢 Step 1.3: Competitor Analysis...');
+      const competitorData = await this.safeRetry(
+        () => this.runCompetitorAnalysis(
+          marketData._meta.data_sources,
+          projectData,
+          trendData
+        ),
+        'Competitor Analysis'
+      ).catch(error => {
+        console.warn('⚠️ Competitor analysis failed, using default');
+        return this.getDefaultCompetitorData();
+      });
+      
+      results.competitors = competitorData;
+      console.log(`✅ Competitors: ${results.competitors.total_analyzed || 0} analyzed`);
+      await this.sleep(this.phaseDelay);
+    } else {
+      results.competitors = this.getDefaultCompetitorData();
+    }
+
+    // Step 4: Reviews (STARTER+)
+    let reviewData = null;
+    if (this.tier !== 'free' && results.competitors?.individual_analyses?.length > 0) {
+      console.log('⭐ Step 1.4: Review Analysis...');
+      reviewData = await this.safeRetry(
+        () => this.runReviewAnalysis(
+          results.competitors.individual_analyses,
+          projectData
+        ),
+        'Review Analysis'
+      ).catch(error => {
+        console.warn('⚠️ Review analysis failed');
+        return null;
+      });
+      
+      results.reviews = reviewData;
+      if (results.reviews) {
+        console.log(`✅ Reviews: ${results.reviews.totalReviewsAnalyzed || 0} analyzed`);
+      }
+      await this.sleep(this.phaseDelay);
+    }
+
+    // Step 5: Research Papers (PREMIUM)
+    let paperData = null;
+    if (this.tier === 'premium') {
+      console.log('📚 Step 1.5: Research Papers...');
+      paperData = await this.safeRetry(
+        () => this.runResearchPapers(projectData),
+        'Research Papers'
+      ).catch(error => {
+        console.warn('⚠️ Research papers failed');
+        return null;
+      });
+      
+      results.researchPapers = paperData;
+      if (results.researchPapers) {
+        console.log(`✅ Papers: ${results.researchPapers.papers_analyzed || 0} analyzed`);
+      }
+      await this.sleep(this.phaseDelay);
+    }
+
+    // Step 6: Strategic Analysis
+    console.log('🎯 Step 1.6: Strategic Analysis...');
+    results.starvingMarket = await this.detectStarvingMarketUltra(
+      results.market,
+      results.competitors,
+      results.reviews,
+      results.trends,
+      results.dateContext
+    );
+    
+    results.uniqueness = await this.calculateUniquenessScoreUltra(
+      projectData,
+      results.competitors,
+      results.researchPapers
+    );
+
+    // CRITICAL FIX: Populate _fullData AFTER all data is collected
+    results._fullData = {
+      market_overview: marketData?.market_overview || null,
+      competition_level: marketData?.competition_level || 'unknown',
+      market_gaps: marketData?.market_gaps || [],
+      competitor_urls: marketData?._meta?.data_sources || [],
+      competitor_analyses: results.competitors?.individual_analyses || [],
+      review_summary: reviewData,
+      trend_list: trendData?.emerging_trends || [],
+      papers_found: paperData?.papers_analyzed || 0
     };
 
-    try {
-      // Step 0: Date context (instant, no API)
-      console.log('📅 Step 1.0: Date & Trend Context...');
-      results.dateContext = this.analyzeDateContextSync(projectData);
-      await this.sleep(1000);
+    console.log('✅ PHASE 1 COMPLETE (Sequential + Safe)');
 
-      // Step 1: Market Intelligence
-      console.log('🔍 Step 1.1: Market Intelligence...');
-      results.market = await this.safeRetry(
-        () => this.runMarketIntelligence(projectData, results.dateContext),
-        'Market Intelligence'
-      ).catch(error => {
-        console.warn('⚠️ Market intelligence failed, using default');
-        return this.getDefaultMarketData(projectData);
-      });
-      
-      console.log(`✅ Market: ${results.market.competition_level || 'unknown'} competition`);
-      await this.sleep(this.phaseDelay); // Delay between major steps
+    this.researchData = results;
+    return results;
 
-      // Step 2: Trend Analysis
-      console.log('📈 Step 1.2: Trend Analysis...');
-      results.trends = await this.safeRetry(
-        () => this.runTrendAnalysis(projectData, results.dateContext),
-        'Trend Analysis'
-      ).catch(error => {
-        console.warn('⚠️ Trend analysis failed, using default');
-        return this.getDefaultTrendData(results.dateContext);
-      });
-      
-      console.log(`✅ Trends: ${results.trends.emerging_trends?.length || 0} identified`);
-      await this.sleep(this.phaseDelay);
-
-      // Step 3: Competitor Analysis (if market data available)
-      if (results.market?._meta?.data_sources?.length > 0) {
-        console.log('🏢 Step 1.3: Competitor Analysis...');
-        results.competitors = await this.safeRetry(
-          () => this.runCompetitorAnalysis(
-            results.market._meta.data_sources,
-            projectData,
-            results.trends
-          ),
-          'Competitor Analysis'
-        ).catch(error => {
-          console.warn('⚠️ Competitor analysis failed, using default');
-          return this.getDefaultCompetitorData();
-        });
-        
-        console.log(`✅ Competitors: ${results.competitors.total_analyzed || 0} analyzed`);
-        await this.sleep(this.phaseDelay);
-      } else {
-        results.competitors = this.getDefaultCompetitorData();
-      }
-
-      // Step 4: Reviews (STARTER+)
-      if (this.tier !== 'free' && results.competitors?.individual_analyses?.length > 0) {
-        console.log('⭐ Step 1.4: Review Analysis...');
-        results.reviews = await this.safeRetry(
-          () => this.runReviewAnalysis(
-            results.competitors.individual_analyses,
-            projectData
-          ),
-          'Review Analysis'
-        ).catch(error => {
-          console.warn('⚠️ Review analysis failed');
-          return null;
-        });
-        
-        if (results.reviews) {
-          console.log(`✅ Reviews: ${results.reviews.totalReviewsAnalyzed || 0} analyzed`);
-        }
-        await this.sleep(this.phaseDelay);
-      }
-
-      // Step 5: Research Papers (PREMIUM)
-      if (this.tier === 'premium') {
-        console.log('📚 Step 1.5: Research Papers...');
-        results.researchPapers = await this.safeRetry(
-          () => this.runResearchPapers(projectData),
-          'Research Papers'
-        ).catch(error => {
-          console.warn('⚠️ Research papers failed');
-          return null;
-        });
-        
-        if (results.researchPapers) {
-          console.log(`✅ Papers: ${results.researchPapers.papers_analyzed || 0} analyzed`);
-        }
-        await this.sleep(this.phaseDelay);
-      }
-
-      // Step 6: Strategic Analysis
-      console.log('🎯 Step 1.6: Strategic Analysis...');
-      results.starvingMarket = await this.detectStarvingMarketUltra(
-        results.market,
-        results.competitors,
-        results.reviews,
-        results.trends,
-        results.dateContext
-      );
-      
-      results.uniqueness = await this.calculateUniquenessScoreUltra(
-        projectData,
-        results.competitors,
-        results.researchPapers
-      );
-
-      console.log('✅ PHASE 1 COMPLETE (Sequential + Safe)');
-
-      this.researchData = results;
-      return results;
-
-    } catch (error) {
-      console.error('❌ Phase 1 CRITICAL ERROR:', error.message);
-      return this.getMinimalResearchData(projectData);
-    }
+  } catch (error) {
+    console.error('❌ Phase 1 CRITICAL ERROR:', error.message);
+    return this.getMinimalResearchData(projectData);
   }
+}
 
   // PHASE 2: SEQUENTIAL STRATEGY
   async executePhase2PlanningUltra(researchData) {

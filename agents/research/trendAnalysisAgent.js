@@ -8,7 +8,7 @@ class TrendAnalysisAgent {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.maxRetries = 3;
   }
 
@@ -100,7 +100,20 @@ class TrendAnalysisAgent {
   }
 
   async tryComplexTrendSynthesis(description, dateContext, google, social, seasonal, tech) {
-    const prompt = `Analyze trends for this project with actionable insights.
+    
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`Analyze trends for this project with actionable insights.
 
 PROJECT: ${description}
 DATE: ${dateContext.currentDate}
@@ -180,9 +193,22 @@ Return ONLY valid JSON:
 
     throw new Error('JSON extraction or validation failed');
   }
-
+  
   async trySimpleTrendSynthesis(description, seasonal, tech) {
-    const prompt = `Simple trend analysis for: ${description}
+
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+
+    const prompt = jsonInstructions +`Simple trend analysis for: ${description}
 
 SEASONAL: ${seasonal.current_season}
 TECH TRENDS: ${tech.relevant_to_project?.length || 0} relevant

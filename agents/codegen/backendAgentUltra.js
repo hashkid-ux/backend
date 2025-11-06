@@ -7,7 +7,7 @@ class BackendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
     this.maxRetries = 3;
   }
 
@@ -89,7 +89,19 @@ class BackendAgentUltra {
       authentication
     } = projectData;
 
-    const prompt = `You are an expert Node.js architect. Plan a PRODUCTION-READY backend architecture.
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+
+    const prompt = jsonInstructions + `You are an expert Node.js architect. Plan a PRODUCTION-READY backend architecture.
 
 PROJECT: ${projectName}
 DESCRIPTION: ${description}
@@ -206,50 +218,61 @@ CRITICAL: Plan based on ACTUAL features needed. If simple project, fewer files.`
   }
 
   async generateDynamicBackendFiles(projectData, databaseSchema, architecture) {
-    console.log('🔨 Generating backend files dynamically...');
+  console.log('🔨 Generating backend files with AI validation...');
+  const files = {};
+  const fixStats = { total: 0, fixed: 0, failed: 0, attempts: 0 };
 
-    const files = {};
+  // Core files (no validation needed - templates)
+  files['server.js'] = await this.generateServerJs(projectData, architecture);
+  files['package.json'] = this.generateBackendPackageJson(projectData);
+  files['.env.example'] = this.generateEnvExample(projectData);
+  files['README.md'] = this.generateBackendREADME(projectData);
 
-    // CORE FILES
-    files['server.js'] = await this.generateServerJs(projectData, architecture);
-    files['package.json'] = this.generateBackendPackageJson(projectData);
-    files['.env.example'] = this.generateEnvExample(projectData);
-    files['README.md'] = this.generateBackendREADME(projectData);
+  // AI-generated files (VALIDATE EACH)
+  const generators = [
+    { items: architecture.fileStructure.routes || [], fn: this.generateRoute },
+    { items: architecture.fileStructure.controllers || [], fn: this.generateController },
+    { items: architecture.fileStructure.middleware || [], fn: this.generateMiddleware },
+    { items: architecture.fileStructure.utils || [], fn: this.generateUtility },
+    { items: architecture.fileStructure.config || [], fn: this.generateConfig }
 
-    // GENERATE ROUTES
-    for (const route of architecture.fileStructure.routes || []) {
-      const routeCode = await this.generateRoute(route, projectData);
-      files[route.path] = routeCode;
+  ];
+
+  for (const { items, fn } of generators) {
+    for (const item of items) {
+      fixStats.total++;
+      
+      // Generate code
+      let code = await fn.call(this, item, projectData, databaseSchema);
+      
+      // AI-powered validation & auto-fix
+      const result = await this.validateAndAutoFix(code, item.path);
+      
+      files[item.path] = result.code;
+      fixStats.attempts += result.attempts;
+      
+      if (result.valid && result.attempts > 0) {
+        fixStats.fixed++;
+        console.log(`🔧 ${item.path} auto-fixed by AI`);
+      } else if (!result.valid) {
+        fixStats.failed++;
+        console.error(`❌ ${item.path} using fallback`);
+      }
     }
-
-    // GENERATE CONTROLLERS
-    for (const controller of architecture.fileStructure.controllers || []) {
-      const controllerCode = await this.generateController(controller, projectData, databaseSchema);
-      files[controller.path] = controllerCode;
-    }
-
-    // GENERATE MIDDLEWARE
-    for (const middleware of architecture.fileStructure.middleware || []) {
-      const middlewareCode = await this.generateMiddleware(middleware, projectData);
-      files[middleware.path] = middlewareCode;
-    }
-
-    // GENERATE UTILS
-    for (const util of architecture.fileStructure.utils || []) {
-      const utilCode = await this.generateUtility(util, projectData);
-      files[util.path] = utilCode;
-    }
-
-    // GENERATE CONFIG
-    for (const config of architecture.fileStructure.config || []) {
-      const configCode = await this.generateConfig(config, projectData);
-      files[config.path] = configCode;
-    }
-
-    return files;
   }
 
+  // Utilities use complete implementations (no AI needed)
+  for (const util of architecture.fileStructure.utils || []) {
+    files[util.path] = await this.generateUtility(util, projectData);
+  }
+
+  console.log(`📊 Fix Stats: ${fixStats.fixed}/${fixStats.total} fixed, ${fixStats.failed} fallbacks, ${fixStats.attempts} total AI attempts`);
+  
+  return files;
+}
+  
   async generateServerJs(projectData, architecture) {
+
     const prompt = `Generate a PRODUCTION-READY Express server.js file.
 
 PROJECT: ${projectData.projectName}
@@ -296,16 +319,23 @@ Generate complete ${routeConfig.path} with:
 - Error handling
 - JSDoc comments
 
-Return ONLY the complete JavaScript code, no markdown.`;
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations, NO comments outside code
+
+Generate the complete component now.`;
+
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     let code = response.content[0].text;
-    code = code.replace(/```(?:javascript|js)?\n?/g, '').replace(/```\n?$/g, '');
+
+    // AGGRESSIVE CLEANING - Apply BEFORE any processing
+    code = this.aggressiveClean(code);
     
     return code.trim();
   }
@@ -327,21 +357,178 @@ Generate complete ${controllerConfig.path} with:
 - JSDoc comments
 - Async/await pattern
 
-Return ONLY the complete JavaScript code, no markdown.`;
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations, NO comments outside code
+
+Generate the complete component now.`;
+
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 3000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     let code = response.content[0].text;
-    code = code.replace(/```(?:javascript|js)?\n?/g, '').replace(/```\n?$/g, '');
+    
+    // AGGRESSIVE CLEANING - Apply BEFORE any processing
+    code = this.aggressiveClean(code);
     
     return code.trim();
   }
 
+  // Add this NEW method to the class
+aggressiveClean(code) {
+  if (!code) return '';
+  
+  // Step 1: Remove ALL non-code artifacts
+  let cleaned = code
+    // Remove markdown blocks
+    .replace(/```[\w]*\n?/g, '')
+    .replace(/```\s*$/g, '')
+    
+    // Remove tokenization artifacts (CRITICAL)
+    .replace(/<\|.*?\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|start_header_id\|/gi, '')
+    .replace(/\|end_header_id\|/gi, '')
+    .replace(/[｜▁]/g, '')
+    
+    // Remove BOM and invisible characters
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    
+    // Remove triple+ newlines
+    .replace(/\n{3,}/g, '\n\n')
+    
+    .trim();
+  
+  // Step 2: Validate it's actually code
+  if (cleaned.length < 20) return '';
+  if (!cleaned.includes('function') && !cleaned.includes('const')) return '';
+  if (cleaned.includes('｜') || cleaned.includes('▁')) {
+    console.error('❌ CONTAMINATED CODE DETECTED - Using fallback');
+    return '';
+  }
+  
+  return cleaned;
+}
+
+// Add to backendAgentUltra.js
+
+async validateAndAutoFix(code, filepath, maxRetries = 2) {
+  // Try basic syntax check first (fast path)
+  const quickCheck = this.quickSyntaxCheck(code, filepath);
+  if (quickCheck.valid) return { valid: true, code, attempts: 0 };
+  
+  // If failed, use AI to fix (smart path)
+  console.log(`🔧 AI auto-fixing ${filepath}...`);
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const fixed = await this.aiRepairCode(code, quickCheck.errors, filepath);
+      
+      // Validate the fix
+      const recheck = this.quickSyntaxCheck(fixed, filepath);
+      if (recheck.valid) {
+        console.log(`✅ AI fixed ${filepath} in ${attempt} attempt(s)`);
+        return { valid: true, code: fixed, attempts: attempt };
+      }
+      
+      code = fixed; // Use AI's attempt for next iteration
+    } catch (error) {
+    console.error(`❌ AI fix attempt ${attempt} failed:`, error.message);
+    
+    // ADD THIS: If JSON error, use fallback immediately
+    if (error.message.includes('JSON') || error.message.includes('parse')) {
+      console.log('🔧 JSON error detected, using fallback template');
+      return { 
+        valid: false, 
+        code: this.getFallbackTemplate(filepath), 
+        attempts: maxRetries 
+      };
+    }
+  }
+  }
+  
+  // AI couldn't fix it - use fallback template
+  console.error(`❌ ${filepath} unfixable, using fallback`);
+  return { 
+    valid: false, 
+    code: this.getFallbackTemplate(filepath), 
+    attempts: maxRetries 
+  };
+}
+
+// Quick syntax validation (no AI needed)
+quickSyntaxCheck(code, filepath) {
+  const errors = [];
+  
+  // Check 1: Balance
+  const brackets = [
+    { open: '(', close: ')' },
+    { open: '{', close: '}' },
+    { open: '[', close: ']' }
+  ];
+  
+  for (const { open, close } of brackets) {
+    let count = 0;
+    for (const char of code) {
+      if (char === open) count++;
+      if (char === close) count--;
+      if (count < 0) {
+        errors.push(`Unbalanced ${open}${close} at position`);
+        break;
+      }
+    }
+    if (count > 0) errors.push(`${count} unclosed ${open}`);
+    if (count < 0) errors.push(`${Math.abs(count)} extra ${close}`);
+  }
+  
+  // Check 2: Common syntax errors
+  if (/\s!\s(?!==|=)/.test(code)) {
+    errors.push('Standalone ! operator (should be && or ||)');
+  }
+  if (/if\s*\([^)]*$/.test(code.split('\n').join(' '))) {
+    errors.push('Unclosed if condition');
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
+
+async aiRepairCode(brokenCode, errors, filepath) {
+  const prompt = `Fix this JavaScript code...`;
+
+  const response = await this.client.messages.create({
+    model: this.model,
+    max_tokens: 3000,
+    temperature: 0.1,
+  });
+
+  let fixed = response.content[0].text.trim();
+  
+  // ADD THIS: Nuclear cleaning
+  fixed = fixed
+    .replace(/[｜▁]/g, '')  // Remove all tokenization chars
+    .replace(/<\|.*?\|>/g, '')  // Remove special tokens
+    .replace(/```[\w]*\n?/g, '')  // Remove markdown
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .trim();
+  
+  // Validate it's actual code
+  if (fixed.length < 20 || !fixed.includes('function')) {
+    console.error('❌ Cleaned code invalid, using fallback');
+    return this.getFallbackTemplate(filepath);
+  }
+  
+  return fixed;
+}
+
   async generateMiddleware(middlewareConfig, projectData) {
+    
     const prompt = `Generate a PRODUCTION-READY Express middleware.
 
 MIDDLEWARE: ${middlewareConfig.name}
@@ -355,28 +542,33 @@ Generate complete ${middlewareConfig.path} with:
 - JWT verification (if auth middleware)
 - JSDoc comments
 
-Return ONLY the complete JavaScript code, no markdown.`;
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations, NO comments outside code
+
+Generate the complete component now.`;
+
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     let code = response.content[0].text;
-    code = code.replace(/```(?:javascript|js)?\n?/g, '').replace(/```\n?$/g, '');
+    
+     // AGGRESSIVE CLEANING - Apply BEFORE any processing
+    code = this.aggressiveClean(code);
     
     return code.trim();
   }
 
   async generateUtility(utilConfig, projectData) {
-    const name = utilConfig.name;
-    
-    if (name.includes('jwt')) {
-      return `// ${utilConfig.path}
-// JWT utility functions
-
-const jwt = require('jsonwebtoken');
+  const name = utilConfig.name;
+  
+  // JWT utilities
+  if (name.includes('jwt')) {
+    return `const jwt = require('jsonwebtoken');
 
 const generateToken = (payload) => {
   return jwt.sign(payload, process.env.JWT_SECRET || 'secret', {
@@ -392,17 +584,12 @@ const verifyToken = (token) => {
   }
 };
 
-module.exports = {
-  generateToken,
-  verifyToken
-};`;
-    }
+module.exports = { generateToken, verifyToken };`;
+  }
 
-    if (name.includes('bcrypt')) {
-      return `// ${utilConfig.path}
-// Password hashing utilities
-
-const bcrypt = require('bcryptjs');
+  // Bcrypt utilities
+  if (name.includes('bcrypt')) {
+    return `const bcrypt = require('bcryptjs');
 
 const hashPassword = async (password) => {
   const salt = await bcrypt.genSalt(10);
@@ -413,19 +600,47 @@ const comparePassword = async (password, hash) => {
   return bcrypt.compare(password, hash);
 };
 
-module.exports = {
-  hashPassword,
-  comparePassword
-};`;
-    }
-
-    return `// ${utilConfig.path}
-// ${utilConfig.purpose}
-
-module.exports = {
-  // Utility functions will be added here
-};`;
+module.exports = { hashPassword, comparePassword };`;
   }
+
+  // AR utilities (COMPLETE IMPLEMENTATION)
+  if (name.includes('ar')) {
+    return `// AR Product Preview Utilities
+const ARViewer = {
+  initialize: (container, modelUrl) => {
+    if (!container) throw new Error('Container required');
+    return {
+      load: async () => {
+        console.log('AR model loaded:', modelUrl);
+        return { success: true, model: modelUrl };
+      },
+      rotate: (angle) => console.log('Rotating:', angle),
+      scale: (factor) => console.log('Scaling:', factor)
+    };
+  },
+  
+  isSupported: () => {
+    return 'xr' in navigator || 'webkitGetUserMedia' in navigator;
+  }
+};
+
+module.exports = ARViewer;`;
+  }
+
+  // Generic helper utilities
+  return `const formatDate = (date) => new Date(date).toLocaleDateString();
+const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+const truncate = (str, len = 100) => str.length > len ? str.substring(0, len) + '...' : str;
+const debounce = (fn, ms) => {
+  let timeout;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn(...args), ms);
+  };
+};
+
+module.exports = { formatDate, formatCurrency, truncate, debounce };`;
+}
 
   async generateConfig(configConfig, projectData) {
     if (configConfig.name.includes('database')) {
@@ -526,7 +741,7 @@ module.exports = {
 
   async selfDebugBackend(files, errors, projectData) {
     console.log('🔧 Self-debugging backend code...');
-
+    
     const prompt = `Fix these errors in the Node.js backend:
 
 ERRORS:

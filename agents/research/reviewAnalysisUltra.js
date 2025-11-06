@@ -9,7 +9,7 @@ class ReviewAnalysisAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.sentiment = new Sentiment();
     this.scraper = new WebScraperUltra();
     this.maxReviews = tier === 'free' ? 50 : tier === 'starter' ? 200 : 500;
@@ -268,7 +268,19 @@ class ReviewAnalysisAgentUltra {
 
     const reviewTexts = sample.map(r => r.text).join('\n\n---\n\n');
 
-    const prompt = `You are a user research expert. Extract ULTRA-DEEP insights from these reviews.
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`You are a user research expert. Extract ULTRA-DEEP insights from these reviews.
 
 BUSINESS CONTEXT: ${ideaContext}
 

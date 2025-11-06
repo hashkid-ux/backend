@@ -114,6 +114,12 @@ const researchRouter = require('./routes/researchUltra');
 const deployRouter = require('./routes/deploy');
 const masterBuildRouter = require('./routes/masterBuild');
 
+const { router: livePreviewRouter } = require('./routes/livePreviewAPI');
+app.use('/api/preview', livePreviewRouter);
+
+const repairRouter = require('./routes/repairCode');
+app.use('/api', repairRouter);
+
 // Mount routes
 app.use('/api/auth', authRouter);
 app.use('/api/auth/oauth', authOAuthRouter);

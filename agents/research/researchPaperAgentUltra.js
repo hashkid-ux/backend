@@ -9,7 +9,7 @@ class ResearchPaperAgentUltra {
   constructor(tier = 'premium') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
   }
 
@@ -261,7 +261,20 @@ class ResearchPaperAgentUltra {
   }
 
   async analyzeWithAI(paper, content, projectDescription) {
-    const prompt = `Analyze this research paper for practical application:
+    
+    const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+    
+    const prompt = jsonInstructions +`Analyze this research paper for practical application:
 
 PROJECT: ${projectDescription}
 
@@ -296,24 +309,29 @@ Return ONLY JSON.`;
   }
 
   async extractInnovationsUltra(papers, projectDescription) {
-    const prompt = `Extract ACTIONABLE innovations from these research papers:
+  
+  const jsonInstructions = `CRITICAL JSON RULES:
+1. Return ONLY valid JSON
+2. No markdown code blocks
+3. No explanations before or after JSON
+4. Start response with {
+5. End response with }
+6. No trailing commas
+7. Escape all quotes in strings
+8. Maximum response length: 4000 tokens
+
+`;
+
+    const prompt = jsonInstructions +`Extract ACTIONABLE innovations from research papers.
 
 PROJECT: ${projectDescription}
 
 PAPERS:
-${papers.slice(0, 5).map((p, i) => `
-${i + 1}. ${p.title}
-   Findings: ${p.key_findings?.join(', ') || 'None'}
-   Applicability: ${p.applicability || 'Unknown'}
-`).join('\n')}
+${papers.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}`).join('\n')}
 
-Extract innovations that:
-1. Are technically feasible
-2. Provide competitive advantage
-3. Solve real user problems
-4. Can be implemented in 3-6 months
+CRITICAL: Return ONLY valid JSON. No markdown, no explanations, no code blocks.
+Start with { and end with }
 
-Return JSON:
 {
   "innovations": [
     {
@@ -321,35 +339,81 @@ Return JSON:
       "from_paper": "Paper title",
       "technical_approach": "How it works",
       "user_benefit": "Why users want this",
-      "implementation_complexity": "easy/medium/hard",
-      "time_to_implement": "X weeks/months",
-      "competitive_advantage": "Why competitors don't have this",
-      "implementation_steps": ["Step 1", "Step 2", "Step 3"],
-      "required_expertise": ["Skill 1", "Skill 2"],
-      "estimated_cost": "$X",
-      "expected_roi": "X% improvement"
+      "implementation_complexity": "easy",
+      "time_to_implement": "4 weeks",
+      "competitive_advantage": "Why unique"
     }
   ]
 }`;
 
-    try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 6000,
-        messages: [{ role: 'user', content: prompt }]
-      });
+  try {
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 4000,
+      temperature: 0.3, // Lower for consistent JSON
+      messages: [{ role: 'user', content: prompt }]
+    });
 
-      const jsonMatch = response.content[0].text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const result = JSON.parse(jsonMatch[0]);
-        return result.innovations || [];
-      }
-      return [];
-    } catch (error) {
-      console.error('Innovation extraction error:', error);
+    const content = response.content[0].text;
+    
+    // ROBUST JSON EXTRACTION
+    const cleaned = this.extractCleanJSON(content);
+    if (!cleaned) {
+      console.warn('⚠️ Failed to extract JSON, returning empty');
       return [];
     }
+    
+    const result = JSON.parse(cleaned);
+    return result.innovations || [];
+    
+  } catch (error) {
+    console.error('Innovation extraction error:', error.message);
+    return [];
   }
+}
+
+extractCleanJSON(text) {
+  // Remove markdown code blocks
+  text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
+  
+  // Find JSON boundaries
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+  
+  let jsonStr = text.substring(firstBrace, lastBrace + 1);
+  
+  // Remove trailing commas
+  jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+  
+  // Remove comments
+  jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
+  jsonStr = jsonStr.replace(/\/\/.*/g, '');
+  
+  // CRITICAL: Truncate at position that caused error (8574)
+  // This prevents malformed content after valid JSON
+  try {
+    // Test parse
+    JSON.parse(jsonStr);
+    return jsonStr;
+  } catch (e) {
+    // If error at specific position, truncate there
+    const match = e.message.match(/position (\d+)/);
+    if (match) {
+      const pos = parseInt(match[1]);
+      // Find last complete object before error
+      const truncated = jsonStr.substring(0, pos);
+      const lastComplete = truncated.lastIndexOf('}');
+      if (lastComplete > 0) {
+        return jsonStr.substring(0, lastComplete + 1);
+      }
+    }
+    return null;
+  }
+}
 
   async generateImplementationRoadmap(innovations, projectDescription) {
     if (innovations.length === 0) return null;

@@ -7,12 +7,12 @@ class StrategyAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-chat-v3.1:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
   }
 
   async validateIdeaUltra(ideaDescription, targetMarket, budget, researchData = null) {
     console.log('🎯 ULTRA Strategy: Validating idea with deep intelligence...');
-
+    
     const prompt = `You are an ULTRA-INTELLIGENT strategic business consultant. Analyze this startup idea with EXTREME depth.
 
 BUSINESS IDEA: ${ideaDescription}
