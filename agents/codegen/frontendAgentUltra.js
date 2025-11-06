@@ -7,7 +7,7 @@ class FrontendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'minimax/minimax-m2:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
     this.maxRetries = 3;
   }
 
@@ -302,46 +302,30 @@ Generate the complete component now.`;
     });
 
     let code = response.content[0].text;
+    // 🔥 NEW: Inject analytics tracker
+  code = this.injectAnalytics(code, projectData.projectId);
     
     // AGGRESSIVE CLEANING - Apply BEFORE any processing
     code = this.aggressiveClean(code);
     
     return code.trim();
   }
+   
 
   async generatePage(pageConfig, projectData) {
-    const prompt = `Generate a PRODUCTION-READY React page component.
+    const prompt = `Generate PRODUCTION-READY React page.
 
-PROJECT: ${projectData.projectName}
 PAGE: ${pageConfig.name}
 PURPOSE: ${pageConfig.purpose}
-FEATURES: ${JSON.stringify(pageConfig.features || [])}
-PSYCHOLOGY TRIGGERS: ${JSON.stringify(pageConfig.psychologyTriggers || [])}
-COMPETITIVE ADVANTAGES: ${JSON.stringify(projectData.competitive_advantages?.slice(0, 3) || [])}
-
-Generate complete ${pageConfig.name}.jsx with:
-- Functional component with hooks
-- Tailwind CSS styling (modern, gradient backgrounds, glassmorphism)
-- Responsive design (mobile-first)
-- Loading states
-- Error handling
-- Psychology triggers integrated: ${pageConfig.psychologyTriggers?.join(', ') || 'Social proof'}
-- SEO meta tags (react-helmet if needed)
-
-Make it VISUALLY STUNNING with:
-- Smooth animations
-- Micro-interactions
-- Modern UI patterns
-- Call-to-action buttons with psychology
 
 CRITICAL RULES:
-1. Return ONLY executable JavaScript code
-2. NO markdown, NO explanations, NO comments outside code
-3. Use functional components with React hooks
-4. Start with: function ${pageConfig.name}() {
-5. End with: export default ${pageConfig.name};
+1. Start with: import React, { useState, useEffect } from 'react';
+2. Import Helmet: import { Helmet } from 'react-helmet';
+3. ALL components must be functional
+4. NO class components
+5. Export default at end
 
-Generate the complete component now.`;
+Generate COMPLETE working page:`;
 
     const response = await this.client.messages.create({
       model: this.model,
@@ -349,13 +333,59 @@ Generate the complete component now.`;
       messages: [{ role: 'user', content: prompt }]
     });
 
-    let code = response.content[0].text;
-
-     // AGGRESSIVE CLEANING - Apply BEFORE any processing
-    code = this.aggressiveClean(code);
-  
-  return code.trim();
+    let code = this.aggressiveClean(response.content[0].text);
+    
+    // 🔥 NEW: Force-inject imports if missing
+    if (!code.includes('import React')) {
+      code = `import React, { useState, useEffect } from 'react';\nimport { Helmet } from 'react-helmet';\n\n${code}`;
+    }
+    
+    // 🔥 NEW: Validate structure
+    if (!this.validateComponent(code, pageConfig.name)) {
+      console.error(`❌ ${pageConfig.name} validation failed, using template`);
+      return this.getFallbackPage(pageConfig, projectData);
+    }
+    
+    return code.trim();
   }
+
+// 🔥 NEW: Add validation method
+validateComponent(code, name) {
+  return code.includes('import React') &&
+         code.includes(`function ${name}`) &&
+         code.includes('export default') &&
+         code.length > 100 &&
+         !code.includes('│') &&
+         !code.includes('▁');
+}
+
+// 🔥 NEW: Fallback templates
+getFallbackPage(pageConfig, projectData) {
+  return `import React, { useState } from 'react';
+import { Helmet } from 'react-helmet';
+
+function ${pageConfig.name}() {
+  const [loading, setLoading] = useState(false);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600">
+      <Helmet>
+        <title>${pageConfig.name} - ${projectData.projectName}</title>
+      </Helmet>
+      <div className="container mx-auto px-4 py-16">
+        <h1 className="text-4xl font-bold text-white mb-8">
+          ${pageConfig.purpose}
+        </h1>
+        <p className="text-white text-lg">
+          This page is part of ${projectData.projectName}.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default ${pageConfig.name};`;
+}
 
   // Add this NEW method to the class
 aggressiveClean(code) {
@@ -671,6 +701,65 @@ Return ONLY valid JSON.`;
     }
   }
 
+  // 🔥 NEW METHOD
+injectAnalytics(appCode, projectId) {
+  const analyticsCode = `
+// Launch AI Analytics
+import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+
+function AnalyticsTracker() {
+  const location = useLocation();
+  
+  useEffect(() => {
+    // Track page views
+    fetch('/api/analytics/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: '${projectId}',
+        event: 'page_view',
+        page: location.pathname
+      })
+    }).catch(console.error);
+  }, [location]);
+  
+  // Track errors
+  useEffect(() => {
+    const handleError = (event) => {
+      fetch('/api/analytics/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: '${projectId}',
+          event: 'error',
+          error: event.error?.message,
+          stack: event.error?.stack
+        })
+      }).catch(console.error);
+    };
+    
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+  
+  return null;
+}
+`;
+
+  // Insert before return statement in App component
+  return appCode.replace(
+    'return (',
+    `${analyticsCode}\n  return (\n    <>\n      <AnalyticsTracker />`
+  ).replace(/return\s*\(/g, (match, offset, string) => {
+    // Only replace the first occurrence in App component
+    if (offset === string.indexOf('return (')) {
+      return `${analyticsCode}\n  return (\n    <>\n      <AnalyticsTracker />`;
+    }
+    return match;
+  });
+}
+
   isBalanced(code, open, close) {
     let count = 0;
     for (const char of code) {
@@ -856,5 +945,6 @@ Generated by Launch AI
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
+
 
 module.exports = FrontendAgentUltra;

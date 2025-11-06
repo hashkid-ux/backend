@@ -333,3 +333,53 @@ model AdminAction {
   @@index([action])
   @@index([createdAt])
 }
+
+// Add to existing schema
+model AnalyticsEvent {
+  id          String   @id @default(uuid())
+  projectId   String
+  eventType   String   // 'page_view', 'error', 'user_action', 'api_call'
+  eventData   Json     // Flexible JSON data
+  userId      String?
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime @default(now())
+  
+  @@index([projectId])
+  @@index([eventType])
+  @@index([timestamp])
+  @@index([userId])
+}
+
+// Post-deployment monitoring
+model DeployedApp {
+  id              String   @id @default(uuid())
+  projectId       String   @unique
+  deployUrl       String
+  status          String   // 'active', 'down', 'degraded'
+  lastCheckAt     DateTime @default(now())
+  uptime          Float    @default(100.0)
+  avgResponseTime Int      @default(0) // milliseconds
+  errorRate       Float    @default(0.0)
+  totalRequests   Int      @default(0)
+  createdAt       DateTime @default(now())
+  
+  @@index([projectId])
+  @@index([status])
+}
+
+// User feedback
+model AppReview {
+  id          String   @id @default(uuid())
+  projectId   String
+  userId      String?
+  rating      Int      // 1-5 stars
+  comment     String?  @db.Text
+  category    String?  // 'bug', 'feature', 'praise', 'question'
+  status      String   @default("new") // 'new', 'reviewed', 'resolved'
+  createdAt   DateTime @default(now())
+  
+  @@index([projectId])
+  @@index([rating])
+  @@index([status])
+}

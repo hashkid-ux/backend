@@ -9,7 +9,7 @@ class ReviewAnalysisAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
     this.sentiment = new Sentiment();
     this.scraper = new WebScraperUltra();
     this.maxReviews = tier === 'free' ? 50 : tier === 'starter' ? 200 : 500;

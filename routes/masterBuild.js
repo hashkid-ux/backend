@@ -454,58 +454,6 @@ router.get('/build/:id', async (req, res) => {
   }
 });
 
-function nuclearValidateFiles(files) {
-  const clean = {};
-  let filtered = 0;
-
-  Object.entries(files).forEach(([path, content]) => {
-    // Skip non-code files
-    if (path.endsWith('.json') || path.endsWith('.html') || 
-        path.endsWith('.md') || path.endsWith('.css') ||
-        path.endsWith('.gitignore') || path.endsWith('.env')) {
-      clean[path] = content;
-      return;
-    }
-
-    // Validate code files
-    if (typeof content !== 'string') {
-      console.error(`🚫 Invalid content type: ${path}`);
-      filtered++;
-      return;
-    }
-
-    // Check for contamination
-    const contaminated = 
-      content.includes('｜') ||
-      content.includes('▁') ||
-      content.includes('<|') ||
-      content.includes('|begin_of_sentence|') ||
-      content.includes('|end_of_turn|');
-
-    if (contaminated) {
-      console.error(`🚫 Contaminated: ${path}`);
-      filtered++;
-      return;
-    }
-
-    // Check minimum validity
-    if (content.length < 10) {
-      console.error(`🚫 Too short: ${path}`);
-      filtered++;
-      return;
-    }
-
-    clean[path] = content;
-  });
-
-  console.log(`✅ Validated: ${Object.keys(clean).length} clean files`);
-  if (filtered > 0) {
-    console.warn(`⚠️ Filtered: ${filtered} invalid files`);
-  }
-
-  return clean;
-}
-
 // ==========================================
 // GET /api/master/build/:id/logs - GET DETAILED LOGS
 // ==========================================
@@ -1172,58 +1120,132 @@ async function createDownloadPackage(buildId, projectName, results) {
       resolve(zipPath);
     });
 
-    archive.on('error', reject);
+    archive.on('error', (err) => {
+      console.error('❌ ZIP creation failed:', err);
+      reject(err);
+    });
+
+    archive.on('warning', (err) => {
+      if (err.code === 'ENOENT') {
+        console.warn('⚠️ ZIP warning:', err);
+      } else {
+        reject(err);
+      }
+    });
+
     archive.pipe(output);
 
     try {
-      // CRITICAL: Extract files first
-      const frontendFiles = results.phase3?.frontend?.files || {};
-      const backendFiles = results.phase3?.backend?.files || {};
+      if (!results.phase3) {
+        throw new Error('Missing phase3 results - no code generated');
+      }
 
-      // NUCLEAR VALIDATION
-      const cleanFrontend = nuclearValidateFiles(frontendFiles);
-      const cleanBackend = nuclearValidateFiles(backendFiles);
+      // ==========================================
+      // EXTRACT FILES FIRST
+      // ==========================================
+      const frontendFiles = results.phase3.frontend?.files || {};
+      const backendFiles = results.phase3.backend?.files || {};
 
-      // Add validated files to ZIP
-      if (Object.keys(cleanFrontend).length > 0) {
-        Object.entries(cleanFrontend).forEach(([filepath, content]) => {
+      // ==========================================
+      // NOW VALIDATE (after extraction)
+      // ==========================================
+      const cleanedFrontendFiles = {};
+      let skippedFiles = 0;
+
+      Object.entries(frontendFiles).forEach(([filepath, content]) => {
+        // Skip if contaminated
+        if (content.includes('│') || content.includes('▁') || content.includes('<|')) {
+          console.error(`🚫 Skipping contaminated file: ${filepath}`);
+          skippedFiles++;
+          return;
+        }
+        
+        // Clean the content
+        let cleaned = content
+          .replace(/```[\w]*\n?/g, '')
+          .replace(/```\s*$/g, '')
+          .replace(/<\|.*?\|>/g, '')
+          .replace(/\|begin_of_sentence\|/gi, '')
+          .replace(/\|end_of_turn\|/gi, '')
+          .trim();
+        
+        cleanedFrontendFiles[filepath] = cleaned;
+      });
+
+      console.log(`✅ Validated: ${Object.keys(cleanedFrontendFiles).length} clean files`);
+      if (skippedFiles > 0) {
+        console.warn(`⚠️ Skipped: ${skippedFiles} contaminated files`);
+      }
+
+      // ==========================================
+      // FRONTEND FILES
+      // ==========================================
+      if (Object.keys(cleanedFrontendFiles).length > 0) {
+        Object.entries(cleanedFrontendFiles).forEach(([filepath, content]) => {
           archive.append(content, { name: `frontend/${filepath}` });
           totalFiles++;
         });
-        console.log(`✅ Added ${Object.keys(cleanFrontend).length} frontend files`);
+        console.log(`✅ Added ${Object.keys(cleanedFrontendFiles).length} frontend files`);
       }
 
-      if (Object.keys(cleanBackend).length > 0) {
-        Object.entries(cleanBackend).forEach(([filepath, content]) => {
-          archive.append(content, { name: `backend/${filepath}` });
+      // ==========================================
+      // BACKEND FILES
+      // ==========================================
+      if (Object.keys(backendFiles).length > 0) {
+        Object.entries(backendFiles).forEach(([filepath, content]) => {
+          // Clean backend files too
+          let cleaned = content
+            .replace(/```[\w]*\n?/g, '')
+            .replace(/```\s*$/g, '')
+            .replace(/<\|.*?\|>/g, '')
+            .trim();
+          
+          archive.append(cleaned, { name: `backend/${filepath}` });
           totalFiles++;
         });
-        console.log(`✅ Added ${Object.keys(cleanBackend).length} backend files`);
+        console.log(`✅ Added ${Object.keys(backendFiles).length} backend files`);
       }
 
-      // Database files
-      if (results.phase3?.database) {
+      // ==========================================
+      // DATABASE FILES
+      // ==========================================
+      if (results.phase3.database) {
+        // Migrations
         if (Array.isArray(results.phase3.database.migrations)) {
           results.phase3.database.migrations.forEach((migration, i) => {
             const sql = typeof migration === 'string' ? migration : migration.sql || '';
-            const name = migration.name || `migration_${String(i + 1).padStart(3, '0')}.sql`;
+            const name = migration.name || `${String(i + 1).padStart(3, '0')}_migration.sql`;
             
             if (sql) {
               archive.append(sql, { name: `database/migrations/${name}` });
               totalFiles++;
             }
           });
+          console.log(`✅ Added ${results.phase3.database.migrations.length} database migrations`);
         }
 
+        // Prisma schema
         if (results.phase3.database.prisma_schema) {
           archive.append(results.phase3.database.prisma_schema, { 
             name: 'backend/prisma/schema.prisma' 
           });
           totalFiles++;
+          console.log('✅ Added Prisma schema');
+        }
+
+        // Seeds
+        if (results.phase3.database.seeds) {
+          archive.append(results.phase3.database.seeds, {
+            name: 'backend/prisma/seed.js'
+          });
+          totalFiles++;
+          console.log('✅ Added database seeds');
         }
       }
 
-      // Documentation
+      // ==========================================
+      // DOCUMENTATION
+      // ==========================================
       archive.append(generateREADME(results), { name: 'README.md' });
       archive.append(generateResearchReport(results.phase1), { name: 'RESEARCH_REPORT.md' });
       archive.append(generateDeploymentGuide(results), { name: 'DEPLOYMENT_GUIDE.md' });
@@ -1231,17 +1253,21 @@ async function createDownloadPackage(buildId, projectName, results) {
       archive.append(generateAPIDoc(results), { name: 'API_DOCUMENTATION.md' });
       archive.append(generateEnvExample(results), { name: '.env.example' });
       totalFiles += 6;
+      console.log('✅ Added documentation files');
 
-      // Config files
+      // ==========================================
+      // CONFIGURATION FILES
+      // ==========================================
       archive.append(generateGitignore(), { name: '.gitignore' });
       archive.append(generateDockerfile(), { name: 'Dockerfile' });
       archive.append(generateDockerCompose(), { name: 'docker-compose.yml' });
       totalFiles += 3;
+      console.log('✅ Added configuration files');
 
       archive.finalize();
 
     } catch (error) {
-      console.error('❌ ZIP creation error:', error);
+      console.error('❌ Error creating ZIP package:', error);
       reject(error);
     }
   });

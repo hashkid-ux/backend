@@ -427,7 +427,7 @@ class AIClient {
     );
     
     this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
     
     // Global settings
     this.maxRetries = 22; // Keep for compatibility

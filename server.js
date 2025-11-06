@@ -106,6 +106,8 @@ const notificationsRouter = require('./routes/notificationsWithDB');
 const dashboardRouter = require('./routes/dashboardWithDB');
 const settingsRouter = require('./routes/settingsWithDB');
 const profileRouter = require('./routes/profileWithDB');
+const analyticsRoutes = require('./routes/analytics');
+const HealthMonitor = require('./services/healthMonitor');
 
 // Legacy routes (keep for compatibility)
 const validateRouter = require('./routes/validate');
@@ -136,6 +138,10 @@ app.use('/api/generate', generateRouter);
 app.use('/api/research', researchRouter);
 app.use('/api/deploy', deployRouter);
 app.use('/api/master', masterBuildRouter);
+app.use('/api/analytics', analyticsRoutes);
+
+// Start health monitoring
+HealthMonitor.checkAllApps();
 
 // ==========================================
 // ERROR HANDLING

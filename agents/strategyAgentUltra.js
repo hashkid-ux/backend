@@ -7,7 +7,7 @@ class StrategyAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
   }
 
   async validateIdeaUltra(ideaDescription, targetMarket, budget, researchData = null) {

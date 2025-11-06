@@ -7,7 +7,7 @@ class DatabaseAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'minimax/minimax-m2:free';
+    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
     this.maxRetries = 3;
   }
 
