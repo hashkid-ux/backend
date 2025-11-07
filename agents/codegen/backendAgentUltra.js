@@ -305,26 +305,53 @@ Return ONLY the complete JavaScript code, no markdown.`;
   }
 
   async generateRoute(routeConfig, projectData) {
-    const prompt = `Generate a PRODUCTION-READY Express route file.
+    // NEW: Check if we have API directive
+    const hasDirective = routeConfig.features && routeConfig.validation;
+    
+    let prompt;
+    
+    if (hasDirective) {
+      // Use clean directive-based prompt
+      prompt = `Generate PRODUCTION-READY Express route.
+
+ROUTE: ${routeConfig.route || routeConfig.path}
+METHOD: ${routeConfig.method || 'GET'}
+PURPOSE: ${routeConfig.purpose}
+
+FEATURES:
+${routeConfig.features?.map(f => `- ${f}`).join('\n') || '- Basic functionality'}
+
+VALIDATION:
+${routeConfig.validation?.map(v => `- ${v}`).join('\n') || '- Input validation'}
+
+SECURITY:
+${routeConfig.security?.map(s => `- ${s}`).join('\n') || '- Basic security'}
+
+RESPONSE FORMAT:
+${routeConfig.response || 'JSON with success flag'}
+
+CRITICAL RULES:
+1. Return ONLY executable JavaScript code
+2. NO markdown, NO explanations
+3. Include express-validator
+4. Proper error handling
+
+Generate complete route file now.`;
+
+    } else {
+      // Fallback to original prompt
+      prompt = `Generate PRODUCTION-READY Express route.
 
 ROUTE: ${routeConfig.name}
 PURPOSE: ${routeConfig.purpose}
 ENDPOINTS: ${JSON.stringify(routeConfig.endpoints || [])}
 
-Generate complete ${routeConfig.path} with:
-- Express Router
-- All endpoints defined
-- Proper HTTP methods (GET, POST, PUT, DELETE)
-- Request validation
-- Error handling
-- JSDoc comments
-
 CRITICAL RULES:
-1. Return ONLY executable JavaScript code
-2. NO markdown, NO explanations, NO comments outside code
+1. Return ONLY executable JavaScript
+2. NO markdown, NO explanations
 
-Generate the complete component now.`;
-
+Generate complete route.`;
+    }
 
     const response = await this.client.messages.create({
       model: this.model,
@@ -333,8 +360,6 @@ Generate the complete component now.`;
     });
 
     let code = response.content[0].text;
-
-    // AGGRESSIVE CLEANING - Apply BEFORE any processing
     code = this.aggressiveClean(code);
     
     return code.trim();

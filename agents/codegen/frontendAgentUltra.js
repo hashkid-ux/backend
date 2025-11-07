@@ -12,7 +12,7 @@ class FrontendAgentUltra {
   }
 
   async generateAppUltra(projectData) {
-    console.log('⚛️  ULTRA Frontend Agent: Starting intelligent generation...');
+    console.log('⚛️  ULTRA Frontend Agent: Starting with strategic directives...');
 
     let attempt = 0;
     let lastError = null;
@@ -22,15 +22,29 @@ class FrontendAgentUltra {
         attempt++;
         console.log(`   🔄 Attempt ${attempt}/${this.maxRetries}`);
 
-        // PHASE 1: Analyze requirements and plan architecture
-        const architecture = await this.planArchitecture(projectData);
+        // NEW: Check if we have clean directives
+        const hasDirectives = projectData.frontend_directives && 
+                             projectData.frontend_directives.pages;
+
+        let architecture;
+        
+        if (hasDirectives) {
+          // Use directives to plan architecture
+          console.log('   ✅ Using strategic directives for architecture');
+          architecture = this.architectureFromDirectives(projectData.frontend_directives);
+        } else {
+          // Fallback to original planning
+          console.log('   ⚠️ No directives, using original planning');
+          architecture = await this.planArchitecture(projectData);
+        }
+        
         console.log(`   ✅ Architecture planned: ${architecture.totalFiles} files`);
 
         // PHASE 2: Generate all files dynamically
         const files = await this.generateDynamicFiles(projectData, architecture);
         console.log(`   ✅ Generated ${Object.keys(files).length} files`);
 
-        // PHASE 3: Validate code
+        // Rest of validation remains same...
         const validation = await this.validateCode(files);
         
         if (validation.isValid) {
@@ -44,7 +58,6 @@ class FrontendAgentUltra {
           };
         }
 
-        // PHASE 4: Self-debug if validation failed
         console.log(`   ⚠️  Validation failed: ${validation.errors.join(', ')}`);
         console.log('   🔧 Self-debugging...');
         
@@ -77,6 +90,61 @@ class FrontendAgentUltra {
     }
 
     throw new Error(`Frontend generation failed after ${this.maxRetries} attempts: ${lastError}`);
+  }
+
+  // NEW METHOD: Convert directives to architecture
+  architectureFromDirectives(directives) {
+    const pages = directives.pages || [];
+    const components = directives.components || [];
+    
+    return {
+      totalFiles: pages.length + components.length + 10, // +10 for core files
+      fileStructure: {
+        pages: pages.map(p => ({
+          name: p.name,
+          path: `src/pages/${p.name}.jsx`,
+          purpose: p.purpose,
+          components: p.components_needed,
+          design: p.design_specs,
+          content: p.content_specs,
+          priority: 'critical'
+        })),
+        components: components.map(c => ({
+          name: c.name,
+          path: `src/components/${c.name}.jsx`,
+          purpose: c.features.join(', '),
+          design: c.design,
+          reusable: true,
+          priority: 'critical'
+        })),
+        services: [
+          {
+            name: 'api',
+            path: 'src/services/api.js',
+            purpose: 'API client',
+            priority: 'critical'
+          }
+        ],
+        contexts: [],
+        utils: [
+          {
+            name: 'helpers',
+            path: 'src/utils/helpers.js',
+            purpose: 'Utility functions',
+            priority: 'medium'
+          }
+        ],
+        hooks: []
+      },
+      techStack: {
+        framework: 'React 18',
+        routing: 'React Router v6',
+        styling: 'Tailwind CSS',
+        state: 'Context API + Hooks',
+        http: 'Axios'
+      },
+      directives_used: true
+    };
   }
 
   async planArchitecture(projectData) {
@@ -476,7 +544,50 @@ Generate the complete component now.`;
    
 
   async generatePage(pageConfig, projectData) {
-    const prompt = `Generate PRODUCTION-READY React page.
+    // NEW: Check if we have directive-based config
+    const hasDirective = pageConfig.design && pageConfig.content;
+    
+    let prompt;
+    
+    if (hasDirective) {
+      // Use clean directive-based prompt
+      prompt = `Generate PRODUCTION-READY React page component.
+
+COMPONENT: ${pageConfig.name}
+PURPOSE: ${pageConfig.purpose}
+
+EXACT REQUIREMENTS:
+${pageConfig.components?.map(c => `- Include ${c} component`).join('\n') || '- Functional page layout'}
+
+DESIGN SPECS:
+- Theme: ${pageConfig.design?.theme || 'modern dark'}
+- Colors: ${pageConfig.design?.colors || 'bg-slate-900'}
+- Layout: ${pageConfig.design?.layout || 'centered'}
+
+CONTENT SPECS:
+- Headline: "${pageConfig.content?.hero_headline || projectData.projectName}"
+- Subtext: "${pageConfig.content?.hero_subtext || projectData.description}"
+- CTA: "${pageConfig.content?.cta_text || 'Get Started'}"
+${pageConfig.content?.social_proof ? `- Social Proof: "${pageConfig.content.social_proof}"` : ''}
+
+PSYCHOLOGY:
+${pageConfig.psychology_triggers?.map(t => `- ${t}`).join('\n') || '- Build trust'}
+
+INTERACTIONS:
+${pageConfig.interactions?.map(i => `- ${i}`).join('\n') || '- Smooth transitions'}
+
+CRITICAL RULES:
+1. Start with: import React, { useState, useEffect } from 'react';
+2. Import Helmet: import { Helmet } from 'react-helmet';
+3. Functional component ONLY
+4. Export default at end
+5. NO markdown, NO explanations
+
+Generate complete working component now.`;
+
+    } else {
+      // Fallback to original prompt
+      prompt = `Generate PRODUCTION-READY React page.
 
 PAGE: ${pageConfig.name}
 PURPOSE: ${pageConfig.purpose}
@@ -484,26 +595,27 @@ PURPOSE: ${pageConfig.purpose}
 CRITICAL RULES:
 1. Start with: import React, { useState, useEffect } from 'react';
 2. Import Helmet: import { Helmet } from 'react-helmet';
-3. ALL components must be functional
-4. NO class components
-5. Export default at end
+3. Functional component ONLY
+4. Export default at end
+5. NO markdown, NO explanations
 
-Generate COMPLETE working page:`;
+Generate COMPLETE working page.`;
+    }
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 4000,
+      max_tokens: 5000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     let code = this.aggressiveClean(response.content[0].text);
     
-    // 🔥 NEW: Force-inject imports if missing
+    // Force-inject imports if missing
     if (!code.includes('import React')) {
       code = `import React, { useState, useEffect } from 'react';\nimport { Helmet } from 'react-helmet';\n\n${code}`;
     }
     
-    // 🔥 NEW: Validate structure
+    // Validate structure
     if (!this.validateComponent(code, pageConfig.name)) {
       console.error(`❌ ${pageConfig.name} validation failed, using template`);
       return this.getFallbackPage(pageConfig, projectData);
@@ -522,32 +634,50 @@ validateComponent(code, name) {
          !code.includes('▁');
 }
 
-// 🔥 NEW: Fallback templates
 getFallbackPage(pageConfig, projectData) {
-  return `import React, { useState } from 'react';
+  return `import React from 'react';
 import { Helmet } from 'react-helmet';
 
 function ${pageConfig.name}() {
-  const [loading, setLoading] = useState(false);
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 text-white">
       <Helmet>
-        <title>${pageConfig.name} - ${projectData.projectName}</title>
+        <title>${pageConfig.name} • ${projectData.projectName}</title>
       </Helmet>
-      <div className="container mx-auto px-4 py-16">
-        <h1 className="text-4xl font-bold text-white mb-8">
-          ${pageConfig.purpose}
-        </h1>
-        <p className="text-white text-lg">
-          This page is part of ${projectData.projectName}.
-        </p>
+
+      <div className="bg-white/10 backdrop-blur-lg p-10 rounded-2xl shadow-2xl max-w-lg w-full text-center border border-white/20">
+        <div className="mb-6">
+          <h1 className="text-5xl font-extrabold tracking-tight mb-4 drop-shadow-md">
+            ${pageConfig.purpose || "Page Unavailable"}
+          </h1>
+          <p className="text-lg text-white/90">
+            This is a fallback page for <span className="font-semibold">${projectData.projectName}</span>.
+          </p>
+        </div>
+
+        <div className="animate-pulse mt-10">
+          <div className="h-3 w-3 rounded-full bg-white inline-block mx-1"></div>
+          <div className="h-3 w-3 rounded-full bg-white/70 inline-block mx-1"></div>
+          <div className="h-3 w-3 rounded-full bg-white/50 inline-block mx-1"></div>
+        </div>
+
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-10 px-6 py-3 bg-white text-purple-700 font-semibold rounded-lg shadow-md hover:bg-purple-100 transition-all"
+        >
+          Retry
+        </button>
       </div>
+
+      <footer className="absolute bottom-6 text-sm text-white/70">
+        © ${new Date().getFullYear()} ${projectData.projectName}. All rights reserved.
+      </footer>
     </div>
   );
 }
 
-export default ${pageConfig.name};`;
+export default ${pageConfig.name};
+`;
 }
 
  // 🔥 NUCLEAR CODE CLEANER - Add to ALL agents

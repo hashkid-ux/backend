@@ -354,26 +354,51 @@ class MasterOrchestrator {
   }
 
   // PHASE 3: SEQUENTIAL CODE GENERATION
+  // PHASE 3: CODE GENERATION (50-85%)
   async executePhase3CodeGenerationUltra(strategyData, projectData) {
-    console.log('\n💻 PHASE 3: Code Generation (Sequential + Safe)...');
-
+    console.log('\n💻 PHASE 3: Code Generation WITH STRATEGIC PROMPTS');
+    console.log('─'.repeat(60));
+    
     try {
+      // NEW: Strategic Prompt Agent distills research
+      const PromptStrategistAgent = require('./strategy/promptStrategistAgent');
+      const strategist = new PromptStrategistAgent(this.tier);
+      
+      console.log('🎯 Distilling research into clean directives...');
+      const directives = await this.safeRetry(
+        () => strategist.distillIntoPrompts(this.researchData, strategyData, projectData),
+        'Strategic Prompt Distillation'
+      );
+      
+      console.log('✅ Directives ready:', {
+        pages: directives.frontend_directives?.pages?.length || 0,
+        apis: directives.backend_directives?.apis?.length || 0,
+        tables: directives.database_directives?.tables?.length || 0
+      });
+
+      // Enhanced requirements with directives
       const enhancedReqs = {
         projectName: projectData.projectName,
         description: projectData.description,
         framework: projectData.framework || 'react',
         database: projectData.database || 'postgresql',
-        competitive_advantages: this.competitiveAdvantages,
-        ux_principles: strategyData.ux_strategy.principles,
-        features: strategyData.features_prioritized,
-        psychology_triggers: strategyData.ux_strategy.psychologyTriggers,
-        growth_hacks: strategyData.growth_strategy?.tactics || [],
+        
+        // NEW: Pass directives instead of raw data
+        frontend_directives: directives.frontend_directives,
+        backend_directives: directives.backend_directives,
+        database_directives: directives.database_directives,
+        priority_order: directives.priority_order,
+        
+        // Keep minimal context
+        competitive_advantages: this.competitiveAdvantages.slice(0, 3),
+        features: strategyData.features_prioritized?.slice(0, 5) || [],
         dateContext: this.researchData.dateContext
       };
 
       // Step 1: Database Schema
       console.log('🗄️ Step 3.1: Database Schema Design...');
       const database = await this.safeRetry(async () => {
+        const DatabaseAgentUltra = require('./codegen/databaseAgentUltra');
         const dbAgent = new DatabaseAgentUltra(this.tier);
         return await dbAgent.designSchemaUltra(enhancedReqs, this.researchData);
       }, 'Database Schema');
@@ -384,6 +409,7 @@ class MasterOrchestrator {
       // Step 2: Backend Generation
       console.log('⚙️ Step 3.2: Backend Generation...');
       const backend = await this.safeRetry(async () => {
+        const BackendAgentUltra = require('./codegen/backendAgentUltra');
         const backendAgent = new BackendAgentUltra(this.tier);
         return await backendAgent.generateBackendUltra(enhancedReqs, database);
       }, 'Backend Generation');
@@ -394,6 +420,7 @@ class MasterOrchestrator {
       // Step 3: Frontend Generation
       console.log('⚛️ Step 3.3: Frontend Generation...');
       const frontend = await this.safeRetry(async () => {
+        const FrontendAgentUltra = require('./codegen/frontendAgentUltra');
         const frontendAgent = new FrontendAgentUltra(this.tier);
         return await frontendAgent.generateAppUltra(enhancedReqs);
       }, 'Frontend Generation');
@@ -404,10 +431,11 @@ class MasterOrchestrator {
         database,
         backend,
         frontend,
+        directives_used: directives,
         research_applied: {
           competitive_advantages: this.competitiveAdvantages.length,
-          ux_principles: strategyData.ux_strategy.principles.length,
-          psychology_triggers: strategyData.ux_strategy.psychologyTriggers?.length || 0
+          directives_generated: true,
+          clean_prompts: true
         },
         totalFiles: (database.migrations?.length || 0) + 
                    (backend.stats?.total_files || 0) + 
@@ -416,7 +444,7 @@ class MasterOrchestrator {
                    (frontend.stats?.total_lines || 0)
       };
 
-      console.log('✅ PHASE 3 COMPLETE');
+      console.log('✅ PHASE 3 COMPLETE with strategic directives');
       return result;
 
     } catch (error) {
