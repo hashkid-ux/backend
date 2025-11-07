@@ -379,41 +379,143 @@ Generate the complete component now.`;
   }
 
   // Add this NEW method to the class
+// 🔥 NUCLEAR CODE CLEANER - Add to ALL agents
+
+// Replace aggressiveClean in frontendAgentUltra.js, backendAgentUltra.js:
+
 aggressiveClean(code) {
-  if (!code) return '';
+  if (!code || typeof code !== 'string') return '';
   
-  // Step 1: Remove ALL non-code artifacts
-  let cleaned = code
-    // Remove markdown blocks
+  let cleaned = code;
+  
+  // === STEP 1: Remove ALL non-code artifacts ===
+  cleaned = cleaned
+    // Markdown blocks
     .replace(/```[\w]*\n?/g, '')
     .replace(/```\s*$/g, '')
     
-    // Remove tokenization artifacts (CRITICAL)
-    .replace(/<\|.*?\|>/g, '')
+    // Tokenization artifacts (CRITICAL)
+    .replace(/<\|[^|]*\|>/g, '')
     .replace(/\|begin_of_sentence\|/gi, '')
     .replace(/\|end_of_turn\|/gi, '')
     .replace(/\|start_header_id\|/gi, '')
     .replace(/\|end_header_id\|/gi, '')
-    .replace(/[｜▁]/g, '')
+    .replace(/\|eot_id\|/gi, '')
+    .replace(/\|assistant\|/gi, '')
+    .replace(/\|user\|/gi, '')
     
-    // Remove BOM and invisible characters
+    // Unicode box drawing & special chars
+    .replace(/[│▁▂▃▄▅▆▇█]/g, '')
+    .replace(/[\u2500-\u257F]/g, '') // Box drawing
+    .replace(/[\u2580-\u259F]/g, '') // Block elements
+    
+    // BOM and invisible chars
     .replace(/^\uFEFF/, '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     
-    // Remove triple+ newlines
-    .replace(/\n{3,}/g, '\n\n')
-    
-    .trim();
+    // Multiple newlines
+    .replace(/\n{4,}/g, '\n\n\n');
   
-  // Step 2: Validate it's actually code
-  if (cleaned.length < 20) return '';
-  if (!cleaned.includes('function') && !cleaned.includes('const')) return '';
-  if (cleaned.includes('｜') || cleaned.includes('▁')) {
-    console.error('❌ CONTAMINATED CODE DETECTED - Using fallback');
-    return '';
+  // === STEP 2: Validate structure ===
+  const hasValidStart = /^(import|const|function|class|\/\/|\/\*|\s*$)/.test(cleaned.trim());
+  const hasCode = /\w+/.test(cleaned);
+  const hasBraces = cleaned.includes('{') || cleaned.includes('(');
+  
+  if (!hasValidStart || !hasCode || !hasBraces) {
+    console.error('❌ Code validation failed - using fallback');
+    return ''; // Trigger fallback
   }
   
+  // === STEP 3: Check for contamination ===
+  const contaminated = [
+    '│', '▁', '<|', '|>', '|begin', '|end', '|eot', '|assistant'
+  ];
+  
+  for (const marker of contaminated) {
+    if (cleaned.includes(marker)) {
+      console.error(`❌ Contamination detected: ${marker}`);
+      return ''; // Trigger fallback
+    }
+  }
+  
+  // === STEP 4: Fix common syntax issues ===
+  cleaned = cleaned
+    // Fix duplicate imports
+    .replace(/(import\s+\{[^}]+\}\s+from\s+['"][^'"]+['"];?\s*)+/g, (match) => {
+      const imports = [...new Set(match.split(/import\s+/).filter(Boolean))];
+      return imports.map(imp => `import ${imp}`).join('');
+    })
+    
+    // Remove duplicate function definitions
+    .replace(/(function\s+(\w+)\s*\([^)]*\)\s*\{[\s\S]*?\})\s*\1/g, '$1')
+    
+    // Fix broken JSX
+    .replace(/(<\/\w+>)\s*\)/g, '$1')
+    .replace(/\)\s*=>\s*\)/g, ') =>')
+    
+    // Trim excessive whitespace
+    .replace(/[ \t]+$/gm, '')
+    .trim();
+  
   return cleaned;
+}
+
+// === NEW: Pre-generation validation ===
+validateBeforeGeneration(config, type) {
+  const { name, path } = config;
+  
+  // Validate naming
+  if (!/^[A-Z][a-zA-Z0-9]*$/.test(name) && type === 'component') {
+    throw new Error(`Invalid component name: ${name} (must be PascalCase)`);
+  }
+  
+  // Validate path
+  if (path.includes('..') || path.startsWith('/')) {
+    throw new Error(`Invalid path: ${path}`);
+  }
+  
+  return true;
+}
+
+// === NEW: Post-generation validation ===
+validateGeneratedCode(code, filepath) {
+  // Check minimum length
+  if (code.length < 50) {
+    return { valid: false, reason: 'Code too short' };
+  }
+  
+  // Check for required elements
+  const isJS = filepath.endsWith('.js') || filepath.endsWith('.jsx');
+  const isComponent = filepath.includes('components/') || filepath.includes('pages/');
+  
+  if (isJS) {
+    // Must have imports or exports
+    if (!code.includes('import') && !code.includes('export') && !code.includes('module.exports')) {
+      return { valid: false, reason: 'No imports/exports' };
+    }
+    
+    // Components must export default
+    if (isComponent && !code.includes('export default')) {
+      return { valid: false, reason: 'Component missing default export' };
+    }
+  }
+  
+  // Check for contamination markers
+  const contamination = ['│', '▁', '<|', '|>', '|begin', '|end'];
+  for (const marker of contamination) {
+    if (code.includes(marker)) {
+      return { valid: false, reason: `Contamination: ${marker}` };
+    }
+  }
+  
+  // Check balanced brackets
+  const opens = (code.match(/[{[(]/g) || []).length;
+  const closes = (code.match(/[}\])]/g) || []).length;
+  if (Math.abs(opens - closes) > 2) { // Allow small imbalance for templates
+    return { valid: false, reason: 'Unbalanced brackets' };
+  }
+  
+  return { valid: true };
 }
 
 // Add to backendAgentUltra.js

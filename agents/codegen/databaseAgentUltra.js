@@ -215,39 +215,37 @@ datasource db {
 
 `;
 
-  // CRITICAL FIX: Ensure every model has @id
   for (const table of schemaplan.tables || []) {
     prismaSchema += `model ${table.name} {\n`;
     
     let hasId = false;
     const fields = table.fields || [];
     
-    // Check if ID exists
     hasId = fields.some(f => f.attributes && f.attributes.includes('@id'));
     
-    // If no ID, inject one at the start
     if (!hasId) {
       prismaSchema += `  id              String   @id @default(uuid())\n`;
     }
     
-    // Add all fields
     for (const field of fields) {
-      // Skip if it's a duplicate id field
       if (field.name === 'id' && !hasId) continue;
       
+      // FIX: Check if field properties exist
+      const name = (field.name || 'field').padEnd(15);
+      const type = (field.type || 'String').padEnd(15);
       const attributes = field.attributes || '';
-      prismaSchema += `  ${field.name.padEnd(15)} ${field.type.padEnd(15)}${attributes ? ' ' + attributes : ''}\n`;
+      
+      prismaSchema += `  ${name} ${type}${attributes ? ' ' + attributes : ''}\n`;
     }
     
-    // Add relations
     if (table.relations && table.relations.length > 0) {
       prismaSchema += '\n  // Relations\n';
       for (const relation of table.relations) {
-        prismaSchema += `  ${relation.field.padEnd(15)} ${relation.type}\n`;
+        const relName = (relation.field || 'relation').padEnd(15);
+        prismaSchema += `  ${relName} ${relation.type}\n`;
       }
     }
     
-    // Add indexes
     if (table.indexes && table.indexes.length > 0) {
       prismaSchema += '\n';
       for (const index of table.indexes) {
