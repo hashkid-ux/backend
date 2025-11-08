@@ -46,7 +46,6 @@ class APIKeyManager extends EventEmitter {
     }));
     
     // CONSERVATIVE SETTINGS - Key to preventing rate limits
-    this.minDelayBetweenRequests = 5000; // 5s (was 2s) - CRITICAL FIX
     this.rateLimitCooldown = 120000; // 2min (was 90s)
     this.maxConsecutiveErrors = 3;
     this.healthCheckInterval = 30000; // 30s
@@ -61,7 +60,6 @@ class APIKeyManager extends EventEmitter {
     
     // Global request tracking - CRITICAL for preventing cascading failures
     this.globalLastRequestTime = 0;
-    this.globalMinDelay = 3000; // 3s between ANY requests
     
     this.startHealthMonitoring();
     this.startRequestCleaner();
@@ -124,93 +122,30 @@ class APIKeyManager extends EventEmitter {
 
   // BULLETPROOF: Smart key selection with global throttling
   async getNextAvailableKey() {
-    const now = Date.now();
-    const totalKeys = this.keys.length;
-
-    // ← ADD: Emergency brake
-  const availableKeys = this.keyHealth.filter(k => 
-    k.isHealthy && 
-    k.rateLimitedUntil < now &&
-    k.requestsInLastMinute < k.estimatedCapacity * 0.8
-  );
+  const now = Date.now();
   
-  if (availableKeys.length === 0) {
-    console.warn('⚠️ ALL KEYS EXHAUSTED - forcing 300s cooldown');
-    await this.sleep(300000);
-    // Reset counters
-    this.keyHealth.forEach(k => k.requestsInLastMinute = 0);
-  }
+  // Find ANY healthy key that's not rate-limited
+  for (let i = 0; i < this.keys.length; i++) {
+    const idx = (this.currentIndex + i) % this.keys.length;
+    const key = this.keyHealth[idx];
     
-    // CRITICAL: Global rate limiting across ALL keys
-    const timeSinceGlobalRequest = now - this.globalLastRequestTime;
-    if (timeSinceGlobalRequest < this.globalMinDelay) {
-      const waitTime = this.globalMinDelay - timeSinceGlobalRequest;
-      console.log(`⏳ Global throttle: waiting ${Math.ceil(waitTime/1000)}s`);
-      await this.sleep(waitTime);
-    }
-    
-    let attempts = 0;
-    
-    while (attempts < totalKeys * 2) {
-      const keyHealth = this.keyHealth[this.currentIndex];
-      attempts++;
+    if (key.isHealthy && key.rateLimitedUntil < now) {
+      // Global minimum delay only
+      const sinceGlobal = now - this.globalLastRequestTime;
+      if (sinceGlobal < 1000) await this.sleep(1000 - sinceGlobal);
       
-      // Check rate limit
-      if (keyHealth.rateLimitedUntil > now) {
-        const waitTime = Math.ceil((keyHealth.rateLimitedUntil - now) / 1000);
-        console.log(`⏭️ Key ${keyHealth.id} rate limited (${waitTime}s remaining)`);
-        this.currentIndex = (this.currentIndex + 1) % totalKeys;
-        continue;
-      }
-      
-      // Check health
-      if (!keyHealth.isHealthy) {
-        console.log(`⏭️ Key ${keyHealth.id} unhealthy (${keyHealth.consecutiveErrors} errors)`);
-        this.currentIndex = (this.currentIndex + 1) % totalKeys;
-        continue;
-      }
-      
-      // Predictive throttling
-      if (this.isPredictivelyThrottled(keyHealth)) {
-        console.log(`⏭️ Key ${keyHealth.id} predictively throttled (${keyHealth.requestsInLastMinute}/${keyHealth.estimatedCapacity} per min)`);
-        this.currentIndex = (this.currentIndex + 1) % totalKeys;
-        continue;
-      }
-      
-      // Per-key delay with adaptive backoff
-      const effectiveDelay = this.minDelayBetweenRequests * this.globalBackoffMultiplier;
-      const timeSinceLastRequest = now - keyHealth.lastRequestTime;
-      if (timeSinceLastRequest < effectiveDelay) {
-        const waitTime = Math.ceil((effectiveDelay - timeSinceLastRequest) / 1000);
-        console.log(`⏭️ Key ${keyHealth.id} cooling down (${waitTime}s)`);
-        this.currentIndex = (this.currentIndex + 1) % totalKeys;
-        continue;
-      }
-      
-      // Key is available!
-      const selectedIndex = this.currentIndex;
-      const selectedKey = keyHealth.fullKey;
-      
-      // Update tracking
-      keyHealth.lastRequestTime = now;
-      keyHealth.totalRequests++;
-      keyHealth.requestTimestamps.push(now);
+      key.lastRequestTime = now;
+      key.totalRequests++;
+      key.requestTimestamps.push(now);
       this.globalLastRequestTime = now;
+      this.currentIndex = (idx + 1) % this.keys.length;
       
-      // Move to next
-      this.currentIndex = (this.currentIndex + 1) % totalKeys;
-            
-      return {
-        key: selectedKey,
-        index: selectedIndex,
-        health: keyHealth
-      };
+      return { key: key.fullKey, index: idx, health: key };
     }
-    
-    // All keys unavailable - wait and retry with least bad
-    console.warn(`⚠️ All ${totalKeys} keys unavailable, finding best option...`);
-    return this.findLeastBadKey(now);
   }
+  
+  throw new Error('No healthy keys available');
+}
 
   async findLeastBadKey(now) {
     const sorted = [...this.keyHealth].sort((a, b) => {
@@ -299,8 +234,9 @@ class APIKeyManager extends EventEmitter {
     
     // Gradually reduce global backoff on success
     if (this.globalBackoffMultiplier > 1.0) {
-      this.globalBackoffMultiplier = Math.max(1.0, this.globalBackoffMultiplier * 0.98);
-    }
+    const anyLimited = this.keyHealth.some(k => k.consecutiveRateLimits > 0);
+    this.globalBackoffMultiplier = anyLimited ? Math.max(1.0, this.globalBackoffMultiplier * 0.9) : 1.0;
+  }
   }
 
   markFailure(index, error) {
