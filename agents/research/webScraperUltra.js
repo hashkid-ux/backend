@@ -567,6 +567,185 @@ class WebScraperUltra {
     return results;
   }
 
+  // agents/research/webScraperUltra.js - SCREENSHOT ENHANCEMENT
+// Add these methods to your existing WebScraperUltra class
+
+// 📸 NEW METHOD: Capture screenshots for design analysis
+async captureScreenshots(urls, options = {}) {
+  console.log(`📸 Capturing screenshots for ${urls.length} URLs...`);
+  
+  const screenshots = [];
+  
+  for (const url of urls.slice(0, 5)) { // Top 5 competitors
+    try {
+      const screenshot = await this.captureScreenshot(url, options);
+      if (screenshot) {
+        screenshots.push(screenshot);
+        console.log(`✅ Captured: ${url.substring(0, 50)}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Screenshot failed: ${url}`);
+    }
+    
+    // Rate limiting
+    await this.sleep(2000);
+  }
+  
+  console.log(`📸 Total screenshots captured: ${screenshots.length}`);
+  return screenshots;
+}
+
+async captureScreenshot(url, options = {}) {
+  // Try browser screenshot first
+  if (!this.browserDisabled) {
+    try {
+      return await this.browserScreenshot(url, options);
+    } catch (error) {
+      console.warn(`Browser screenshot failed: ${error.message}`);
+    }
+  }
+  
+  // Fallback: API service (if configured)
+  if (process.env.SCREENSHOT_API_KEY) {
+    try {
+      return await this.apiScreenshot(url, options);
+    } catch (error) {
+      console.warn(`API screenshot failed: ${error.message}`);
+    }
+  }
+  
+  // Final fallback: Synthetic placeholder
+  return this.syntheticScreenshot(url);
+}
+
+async browserScreenshot(url, options = {}) {
+  const browser = await this.initBrowser();
+  if (!browser) throw new Error('Browser unavailable');
+  
+  let context = null;
+  let page = null;
+  
+  try {
+    context = await browser.newContext({
+      viewport: {
+        width: options.width || 1920,
+        height: options.height || 1080
+      },
+      userAgent: this.getRandomUserAgent()
+    });
+    
+    page = await context.newPage();
+    
+    // Block unnecessary resources
+    await page.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      if (['font', 'media'].includes(type)) {
+        route.abort();
+      } else {
+        route.continue();
+      }
+    });
+    
+    // Navigate
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000
+    });
+    
+    // Wait for visual content
+    await page.waitForTimeout(2000);
+    
+    // Capture screenshot
+    const screenshotBuffer = await page.screenshot({
+      fullPage: false, // Above-the-fold only
+      type: 'jpeg',
+      quality: 80
+    });
+    
+    // Convert to base64
+    const base64Image = screenshotBuffer.toString('base64');
+    
+    return {
+      url,
+      imageUrl: `data:image/jpeg;base64,${base64Image}`,
+      width: options.width || 1920,
+      height: options.height || 1080,
+      method: 'browser',
+      capturedAt: new Date().toISOString()
+    };
+    
+  } finally {
+    if (page) await page.close();
+    if (context) await context.close();
+  }
+}
+
+async apiScreenshot(url, options = {}) {
+  // Example: Using a screenshot API (e.g., ScreenshotAPI.net, ApiFlash)
+  const apiUrl = `https://shot.screenshotapi.net/screenshot`;
+  
+  const response = await axios.get(apiUrl, {
+    params: {
+      url: url,
+      token: process.env.SCREENSHOT_API_KEY,
+      width: options.width || 1920,
+      height: options.height || 1080,
+      output: 'json',
+      file_type: 'jpeg',
+      wait_for_event: 'load'
+    },
+    timeout: 30000
+  });
+  
+  return {
+    url,
+    imageUrl: response.data.screenshot, // URL or base64
+    width: options.width || 1920,
+    height: options.height || 1080,
+    method: 'api',
+    capturedAt: new Date().toISOString()
+  };
+}
+
+syntheticScreenshot(url) {
+  // Placeholder when screenshot capture fails
+  return {
+    url,
+    imageUrl: 'https://via.placeholder.com/1920x1080/667eea/ffffff?text=Screenshot+Unavailable',
+    width: 1920,
+    height: 1080,
+    method: 'synthetic',
+    capturedAt: new Date().toISOString(),
+    note: 'Actual screenshot unavailable - using placeholder'
+  };
+}
+
+// 📸 HELPER: Capture multiple pages per site
+async captureMultiplePages(url, pages = ['/', '/pricing', '/features']) {
+  const screenshots = [];
+  
+  for (const page of pages) {
+    const fullUrl = new URL(page, url).href;
+    const screenshot = await this.captureScreenshot(fullUrl);
+    
+    if (screenshot) {
+      screenshot.pageName = page === '/' ? 'Homepage' : page.replace('/', '');
+      screenshots.push(screenshot);
+    }
+  }
+  
+  return screenshots;
+}
+
+// 📸 HELPER: Capture with mobile viewport
+async captureMobileScreenshot(url) {
+  return this.captureScreenshot(url, {
+    width: 375,
+    height: 667,
+    deviceScaleFactor: 2
+  });
+}
+
   // ==========================================
   // REVIEW EXTRACTION - POWERFUL
   // ==========================================

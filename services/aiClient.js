@@ -90,7 +90,6 @@ class APIKeyManager extends EventEmitter {
       throw new Error('❌ No valid API keys found');
     }
 
-    console.log(`✅ Loaded ${keys.length} API keys`);
     return keys;
   }
 
@@ -200,13 +199,7 @@ class APIKeyManager extends EventEmitter {
       
       // Move to next
       this.currentIndex = (this.currentIndex + 1) % totalKeys;
-      
-      const successRate = keyHealth.totalRequests > 0 
-        ? Math.round((keyHealth.successfulRequests / keyHealth.totalRequests) * 100)
-        : 0;
-      
-      console.log(`🔑 Using Key ${keyHealth.id} (${keyHealth.successfulRequests}/${keyHealth.totalRequests} = ${successRate}% success) [Backoff: ${this.globalBackoffMultiplier.toFixed(2)}x]`);
-      
+            
       return {
         key: selectedKey,
         index: selectedIndex,
@@ -302,7 +295,6 @@ class APIKeyManager extends EventEmitter {
     // Mark healthy
     if (!keyHealth.isHealthy) {
       keyHealth.isHealthy = true;
-      console.log(`✅ Key ${keyHealth.id} recovered`);
     }
     
     // Gradually reduce global backoff on success
@@ -355,14 +347,12 @@ class APIKeyManager extends EventEmitter {
     if (key.rateLimitedUntil > 0 && key.rateLimitedUntil < now) {
       key.rateLimitedUntil = 0;
       key.consecutiveRateLimits = 0;
-      console.log(`🔄 Key ${key.id} recovered from rate limit`);
     }
     
     // Auto-recover from errors after 5 minutes
     if (!key.isHealthy && now - key.lastRequestTime > 300000) {
       key.isHealthy = true;
       key.consecutiveErrors = 0;
-      console.log(`🔄 Key ${key.id} auto-recovered from errors`);
     }
     
     // Count
@@ -374,7 +364,6 @@ class APIKeyManager extends EventEmitter {
   // CRITICAL FIX: Only log if state changed
   const currentState = `${healthyKeys}-${rateLimitedKeys}-${unhealthyKeys}`;
   if (this.lastHealthState !== currentState) {
-    console.log(`📊 Health Check: ${healthyKeys} healthy, ${rateLimitedKeys} rate limited, ${unhealthyKeys} unhealthy`);
     this.lastHealthState = currentState;
   }
   
@@ -427,7 +416,7 @@ class AIClient {
     );
     
     this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     
     // Global settings
     this.maxRetries = 22; // Keep for compatibility
@@ -473,7 +462,6 @@ class AIClient {
             // CRITICAL: Mark success
             this.keyManager.markSuccess(keyInfo.index, responseTime);
             
-            console.log(`✅ Request succeeded with Key ${keyInfo.health.id} in ${responseTime}ms`);
             return result;
             
           } catch (error) {

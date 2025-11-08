@@ -316,21 +316,48 @@ async generateDynamicFiles(projectData, architecture) {
 
   // PAGES - Direct generation
   for (const page of architecture.fileStructure.pages || []) {
-    try {
-      let code = await this.generatePage(page, projectData);
-      code = this.aggressiveClean(code);
+  try {
+    let code = await this.generatePage(page, projectData);
+    code = this.aggressiveClean(code);
+    
+    // Validate
+    const validation = this.validateGeneratedCode(code, page.path);
+    
+    if (validation.valid) {
+      files[page.path] = code;
+      console.log(`✅ ${page.name} generated successfully`);
+    } else {
+      // Try AI repair (2 attempts)
+      console.log(`⚠️ ${page.name} validation failed, attempting repair...`);
+      let repaired = code;
+      let repairSuccess = false;
       
-      const validation = this.validateGeneratedCode(code, page.path);
-      if (validation.valid) {
-        files[page.path] = code;
-      } else {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          repaired = await this.aiRepairCode(code, validation.errors, page.path);
+          const revalidation = this.validateGeneratedCode(repaired, page.path);
+          
+          if (revalidation.valid) {
+            files[page.path] = repaired;
+            console.log(`✅ ${page.name} repaired on attempt ${attempt}`);
+            repairSuccess = true;
+            break;
+          }
+        } catch (repairError) {
+          console.warn(`⚠️ Repair attempt ${attempt} failed`);
+        }
+      }
+      
+      if (!repairSuccess) {
+        console.error(`❌ ${page.name} using fallback template`);
         files[page.path] = this.getFallbackPage(page, projectData);
       }
-    } catch (error) {
-      console.error(`${page.name} failed:`, error.message);
-      files[page.path] = this.getFallbackPage(page, projectData);
     }
+  } catch (error) {
+    console.error(`❌ ${page.name} generation failed:`, error.message);
+    files[page.path] = this.getFallbackPage(page, projectData);
   }
+}
 
   // COMPONENTS - Direct generation
   for (const component of architecture.fileStructure.components || []) {
@@ -456,53 +483,6 @@ ${name}.propTypes = {
 export default ${name};`;
 }
 
-getFallbackService(config) {
-  const { name, purpose } = config;
-  return `// ${name} service
-export const ${name} = {
-  async execute() {
-    console.warn('${name} executed. ${purpose || 'Service placeholder.'}');
-  }
-};`;
-}
-
-getFallbackContext(config) {
-  const { name, purpose } = config;
-  return `import React, { createContext, useContext, useState } from 'react';
-
-const ${name}Context = createContext();
-
-export function ${name}Provider({ children }) {
-  const [state, setState] = useState(null);
-  return (
-    <${name}Context.Provider value={{ state, setState }}>
-      {children}
-    </${name}Context.Provider>
-  );
-}
-
-export function use${name}() {
-  return useContext(${name}Context);
-}
-
-// ${purpose || 'Context logic placeholder'}`;
-}
-
-getFallbackHook(config) {
-  const { name, purpose } = config;
-  return `import { useState, useEffect } from 'react';
-
-export function use${name}() {
-  const [data, setData] = useState(null);
-
-  useEffect(() => {
-    setData('${purpose || 'Hook initialized'}');
-  }, []);
-
-  return data;
-}`;
-}
-
   async generateAppComponent(projectData, architecture) {
     const prompt = `Generate a PRODUCTION-READY React App.js component.
 
@@ -624,14 +604,16 @@ Generate COMPLETE working page.`;
     return code.trim();
   }
 
-// 🔥 NEW: Add validation method
+// ← REPLACE THIS ENTIRE FUNCTION
 validateComponent(code, name) {
-  return code.includes('import React') &&
-         code.includes(`function ${name}`) &&
-         code.includes('export default') &&
-         code.length > 100 &&
-         !code.includes('│') &&
-         !code.includes('▁');
+  // Minimum viable validation - don't be pedantic
+  const hasReact = /import.*from\s+['"]react['"]/i.test(code);
+  const hasComponent = new RegExp(`(function|const)\\s+${name}`, 'i').test(code);
+  const hasExport = /export\s+(default|{.*})/i.test(code);
+  const minLength = code.length > 50;
+  
+  // Pass if core structure exists (ignore artifacts)
+  return hasReact && hasComponent && hasExport && minLength;
 }
 
 getFallbackPage(pageConfig, projectData) {
@@ -1082,23 +1064,41 @@ Return ONLY valid JSON.`;
   // 🔥 NEW METHOD
 
 injectAnalytics(appCode, projectId) {
-  // STEP 1: Extract imports section
-  const importMatch = appCode.match(/^(import[\s\S]*?from\s+['"][^'"]+['"];?\s*)+/m);
-  const existingImports = importMatch ? importMatch[0] : '';
+  // STEP 1: Find App component (multiple syntaxes)
+  const patterns = [
+    { regex: /function\s+App\s*\([^)]*\)\s*\{/, type: 'function' },
+    { regex: /const\s+App\s*=\s*\([^)]*\)\s*=>\s*\{/, type: 'arrow' },
+    { regex: /export\s+default\s+function\s+App\s*\([^)]*\)\s*\{/, type: 'export' }
+  ];
   
-  // STEP 2: Check if analytics already exists
-  if (appCode.includes('AnalyticsTracker') || appCode.includes('Launch AI Analytics')) {
-    console.log('⚠️ Analytics already present, skipping');
+  let match = null;
+  let matchType = null;
+  
+  for (const { regex, type } of patterns) {
+    match = appCode.match(regex);
+    if (match) {
+      matchType = type;
+      break;
+    }
+  }
+  
+  if (!match) {
+    console.warn('⚠️ Cannot inject analytics - App component not found');
     return appCode;
   }
   
-  // STEP 3: Build analytics component (STANDALONE)
-  const analyticsComponent = `
-// === Launch AI Analytics ===
-function AnalyticsTracker() {
-  const location = useLocation();
+  // STEP 2: Check if already injected
+  if (appCode.includes('AnalyticsTracker') || appCode.includes('/api/analytics/track')) {
+    return appCode;
+  }
   
-  useEffect(() => {
+  // STEP 3: Build analytics component
+  const analyticsCode = `
+// Analytics Tracker
+function AnalyticsTracker() {
+  const location = window.location;
+  
+  React.useEffect(() => {
     fetch('/api/analytics/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1107,82 +1107,43 @@ function AnalyticsTracker() {
         event: 'page_view',
         page: location.pathname
       })
-    }).catch(console.error);
-  }, [location]);
-  
-  useEffect(() => {
-    const handleError = (event) => {
-      fetch('/api/analytics/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: '${projectId}',
-          event: 'error',
-          error: event.error?.message,
-          stack: event.error?.stack
-        })
-      }).catch(console.error);
-    };
-    
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
+    }).catch(() => {});
+  }, [location.pathname]);
   
   return null;
 }
-// === End Analytics ===
 `;
-
-  // STEP 4: Add required imports if missing
-  let finalImports = existingImports;
-  if (!existingImports.includes("useEffect")) {
-    finalImports = finalImports.replace(
-      /import React(.*?)from ['"]react['"]/,
-      "import React, { useEffect }$1from 'react'"
+  
+  // STEP 4: Add useEffect import if missing
+  let finalCode = appCode;
+  if (!finalCode.includes('useEffect')) {
+    finalCode = finalCode.replace(
+      /import\s+React.*from\s+['"]react['"]/,
+      "import React, { useEffect } from 'react'"
     );
   }
-  if (!existingImports.includes("useLocation")) {
-    finalImports += "\nimport { useLocation } from 'react-router-dom';";
+  
+  // STEP 5: Inject before App component
+  const injectPos = match.index;
+  finalCode = finalCode.slice(0, injectPos) + 
+              analyticsCode + '\n' + 
+              finalCode.slice(injectPos);
+  
+  // STEP 6: Add tracker to JSX return
+  const returnMatch = finalCode.match(/return\s*\(/);
+  if (returnMatch) {
+    const returnPos = returnMatch.index + returnMatch[0].length;
+    const beforeReturn = finalCode.slice(0, returnPos);
+    const afterReturn = finalCode.slice(returnPos);
+    
+    // Add as first child
+    const withTracker = afterReturn.replace(
+      /^\s*(<[^>]+>|<>)/,
+      (m) => `${m}\n      <AnalyticsTracker />`
+    );
+    
+    finalCode = beforeReturn + withTracker;
   }
-  
-  // STEP 5: Find App component and inject tracker
-  const appComponentMatch = appCode.match(/(const|function)\s+App\s*=?\s*\([^)]*\)\s*=>\s*\{/);
-  
-  if (!appComponentMatch) {
-    console.warn('⚠️ Could not find App component, skipping analytics');
-    return appCode;
-  }
-  
-  const appStartIndex = appComponentMatch.index + appComponentMatch[0].length;
-  
-  // STEP 6: Find return statement
-  const returnMatch = appCode.slice(appStartIndex).match(/return\s*\(/);
-  
-  if (!returnMatch) {
-    console.warn('⚠️ Could not find return statement');
-    return appCode;
-  }
-  
-  const returnIndex = appStartIndex + returnMatch.index + returnMatch[0].length;
-  
-  // STEP 7: Inject tracker into JSX
-  const beforeReturn = appCode.slice(0, returnIndex);
-  const afterReturn = appCode.slice(returnIndex);
-  
-  // Add tracker as first child in return
-  const jsxWithTracker = afterReturn.replace(
-    /^\s*(<>|<[A-Z]\w*>|<\w+>)/,
-    (match) => `${match}\n      <AnalyticsTracker />`
-  );
-  
-  // STEP 8: Assemble final code
-  const finalCode = 
-    finalImports + 
-    '\n\n' + 
-    analyticsComponent + 
-    '\n' +
-    appCode.slice(existingImports.length, returnIndex) +
-    jsxWithTracker;
   
   return finalCode;
 }

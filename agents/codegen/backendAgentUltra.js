@@ -7,7 +7,7 @@ class BackendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.model = 'qwen/qwen3-coder:free';
     this.maxRetries = 3;
   }
 
@@ -590,10 +590,32 @@ async validateAndAutoFix(code, filepath, maxRetries = 2) {
 }
 
 // Quick syntax validation (no AI needed)
+// ← REPLACE THIS ENTIRE FUNCTION
 quickSyntaxCheck(code, filepath) {
   const errors = [];
   
-  // Check 1: Balance
+  // JS/JSX files: use acorn parser
+  if (filepath.endsWith('.js') || filepath.endsWith('.jsx')) {
+    try {
+      const acorn = require('acorn');
+      const jsx = require('acorn-jsx');
+      const parser = acorn.Parser.extend(jsx());
+      
+      parser.parse(code, {
+        ecmaVersion: 2020,
+        sourceType: 'module',
+        locations: false
+      });
+      
+      return { valid: true, errors: [] };
+    } catch (e) {
+      const msg = e.message.split('\n')[0];
+      errors.push(`Parse error: ${msg}`);
+      return { valid: false, errors };
+    }
+  }
+  
+  // Fallback: bracket counting
   const brackets = [
     { open: '(', close: ')' },
     { open: '{', close: '}' },
@@ -606,24 +628,17 @@ quickSyntaxCheck(code, filepath) {
       if (char === open) count++;
       if (char === close) count--;
       if (count < 0) {
-        errors.push(`Unbalanced ${open}${close} at position`);
+        errors.push(`Unbalanced ${open}${close}`);
         break;
       }
     }
     if (count > 0) errors.push(`${count} unclosed ${open}`);
-    if (count < 0) errors.push(`${Math.abs(count)} extra ${close}`);
-  }
-  
-  // Check 2: Common syntax errors
-  if (/\s!\s(?!==|=)/.test(code)) {
-    errors.push('Standalone ! operator (should be && or ||)');
-  }
-  if (/if\s*\([^)]*$/.test(code.split('\n').join(' '))) {
-    errors.push('Unclosed if condition');
+    if (count < 0) errors.push(`Extra ${close}`);
   }
   
   return { valid: errors.length === 0, errors };
 }
+
 
 async aiRepairCode(brokenCode, errors, filepath) {
   const prompt = `Fix this JavaScript code...`;

@@ -8,7 +8,7 @@ class MarketIntelligenceAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.model = 'google/gemini-2.0-flash-exp:free';
     this.scraper = new WebScraperUltra();
     this.maxCompetitors = tier === 'free' ? 5 : tier === 'starter' ? 10 : 20;
     this.maxRetries = 3;

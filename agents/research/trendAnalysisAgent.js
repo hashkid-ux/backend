@@ -8,7 +8,7 @@ class TrendAnalysisAgent {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.model = 'google/gemini-2.0-flash-exp:free';
     this.maxRetries = 3;
   }
 

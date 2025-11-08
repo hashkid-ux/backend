@@ -9,7 +9,7 @@ class ResearchPaperAgentUltra {
   constructor(tier = 'premium') {
     this.tier = tier;
     this.client = new AIClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.model = 'qwen/qwen3-235b-a22b:free';
     this.scraper = new WebScraperUltra();
   }
 

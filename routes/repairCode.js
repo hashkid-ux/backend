@@ -26,7 +26,7 @@ ${code}
 Return ONLY the fixed code. No explanations. Remove artifacts.`;
 
     const response = await client.messages.create({
-      model: 'qwen/qwen-2.5-coder-32b-instruct:free',
+      model: 'qwen/qwen3-coder:free',
       max_tokens: 4000,
       temperature: 0.1,
       messages: [{ role: 'user', content: prompt }]

@@ -848,6 +848,17 @@ async function runUltraBuildProcess(buildId, projectData, tier) {
       }
     });
 
+    // ← ADD AFTER PHASE 3 COMPLETES
+// Quality check
+const templateCount = Object.entries(phase3.frontend?.files || {})
+  .filter(([path, code]) => code.includes('This is a fallback page')).length;
+
+if (templateCount > 0) {
+  console.warn(`⚠️ WARNING: ${templateCount} template pages used (quality degraded)`);
+} else {
+  console.log('✅ 100% AI-generated pages (no templates)');
+}
+
     console.log(`✅ Phase 3 Complete:`);
     console.log(`   - Total Files: ${filesGenerated}`);
     console.log(`   - Total Lines: ${linesOfCode.toLocaleString()}`);
