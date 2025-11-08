@@ -1,527 +1,369 @@
 // services/aiClient.js
-// 🚀 ULTRA AI CLIENT - BULLETPROOF VERSION
-// Fixed: Rate limiting, success tracking, JSON parsing, error handling
+// PRODUCTION-GRADE AI CLIENT - Fixed Multi-Key Management
 
 const axios = require('axios');
-const EventEmitter = require('events');
 
-class APIKeyManager extends EventEmitter {
-  constructor(apiKeysString) {
-    super();
+class AIClient {
+  constructor(apiKey = null) {
+    this.baseURL = 'https://openrouter.ai/api/v1';
     
-    this.keys = this.parseKeys(apiKeysString);
-    this.currentIndex = 0;
-    this.lastHealthState = '';
+    // MULTI-KEY MANAGEMENT - FIXED
+    this.keys = this.loadKeys();
+    this.keyStats = new Map();
+    this.initializeKeyStats();
     
-    // Enhanced key tracking with FIXED success tracking
-    this.keyHealth = this.keys.map((key, index) => ({
-      id: index + 1,
-      key: this.maskKey(key),
-      fullKey: key,
-      
-      // Stats - FIXED: Properly increment on success
-      totalRequests: 0,
-      successfulRequests: 0,
-      failedRequests: 0,
-      
-      // Rate limiting - CONSERVATIVE DEFAULTS
-      rateLimitedUntil: 0,
-      rateLimitCount: 0,
-      lastRequestTime: 0,
-      consecutiveRateLimits: 0,
-      
-      // Health
-      isHealthy: true,
-      lastError: null,
-      consecutiveErrors: 0,
-      
-      // Performance
-      averageResponseTime: 0,
-      responseTimes: [],
-      
-      // Predictive throttling
-      requestsInLastMinute: 0,
-      requestTimestamps: [],
-      estimatedCapacity: 40 // CONSERVATIVE: 40 req/min (was 100)
-    }));
+    // RATE LIMITING - CONSERVATIVE
+    this.requestQueue = [];
+    this.processing = false;
+    this.globalDelay = 2000; // 2s between ALL requests
+    this.lastRequestTime = 0;
     
-    // CONSERVATIVE SETTINGS - Key to preventing rate limits
-    this.rateLimitCooldown = 120000; // 2min (was 90s)
-    this.maxConsecutiveErrors = 3;
-    this.healthCheckInterval = 30000; // 30s
+    // TOKEN CONSERVATION
+    this.tokenCache = new Map();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
     
-    // Parallel limits - REDUCED for safety
-    this.maxConcurrentRequests = Math.min(this.keys.length, 6); // Max 6 concurrent
-    this.activeRequests = 0;
-    
-    // Smart backoff
-    this.adaptiveDelayEnabled = true;
-    this.globalBackoffMultiplier = 1.5; // Start conservative
-    
-    // Global request tracking - CRITICAL for preventing cascading failures
-    this.globalLastRequestTime = 0;
-    
-    this.startHealthMonitoring();
-    this.startRequestCleaner();
-    
-    console.log(`🔑 API Key Manager Initialized (BULLETPROOF):`);
-    console.log(`   📊 Total Keys: ${this.keys.length}`);
-    console.log(`   ⚡ Max Concurrent: ${this.maxConcurrentRequests}`);
-    console.log(`   🎯 Strategy: Conservative + Predictive`);
-    console.log(`   ⏱️ Min Delay: ${this.minDelayBetweenRequests}ms per key`);
-    console.log(`   🌍 Global Delay: ${this.globalMinDelay}ms between all requests`);
-    console.log(`   🛡️ Rate Limit Protection: Maximum`);
-    this.logKeyStatus();
+    // CLEAN LOGGING
+    this.requestCount = 0;
+    this.errorCount = 0;
+    this.startTime = Date.now();
   }
 
-  parseKeys(keysString) {
-    if (!keysString) {
-      throw new Error('❌ No API keys provided!');
+  loadKeys() {
+    const keys = [];
+    
+    // Load primary key and parse if comma-separated
+    if (process.env.OPENROUTER_API_KEY) {
+      const primaryKeys = process.env.OPENROUTER_API_KEY.split(',').map(k => k.trim()).filter(k => k);
+      keys.push(...primaryKeys);
     }
-
-    const keys = keysString
-      .split(/[,;]/)
-      .map(k => k.trim())
-      .filter(k => k.length > 0);
-
+    
+    // Load backup keys (OPENROUTER_API_KEY_2, OPENROUTER_API_KEY_3, etc)
+    for (let i = 2; i <= 20; i++) {
+      const key = process.env[`OPENROUTER_API_KEY_${i}`];
+      if (key) {
+        const parsedKeys = key.split(',').map(k => k.trim()).filter(k => k);
+        keys.push(...parsedKeys);
+      }
+    }
+    
     if (keys.length === 0) {
-      throw new Error('❌ No valid API keys found');
+      throw new Error('❌ No API keys configured');
     }
-
-    return keys;
-  }
-
-  maskKey(key) {
-    if (!key || key.length < 16) return '****';
-    return `${key.substring(0, 8)}...${key.substring(key.length - 4)}`;
-  }
-
-  // ENHANCED: Predictive throttling with conservative limits
-  isPredictivelyThrottled(keyHealth) {
-    const now = Date.now();
     
-    // Clean old timestamps
-    keyHealth.requestTimestamps = keyHealth.requestTimestamps.filter(
-      t => now - t < 60000
-    );
-    
-    keyHealth.requestsInLastMinute = keyHealth.requestTimestamps.length;
-    
-    // CONSERVATIVE: Throttle at 60% capacity (was 80%)
-    if (keyHealth.requestsInLastMinute >= keyHealth.estimatedCapacity * 0.6) {
+    // Validate key format
+    const validKeys = keys.filter(key => {
+      if (!key.startsWith('sk-or-v1-')) {
+        console.warn(`⚠️ Invalid key format (skipping): ${key.substring(0, 20)}...`);
+        return false;
+      }
       return true;
+    });
+    
+    if (validKeys.length === 0) {
+      throw new Error('❌ No valid API keys found (must start with sk-or-v1-)');
     }
     
-    // If ANY recent rate limits, be VERY conservative
-    if (keyHealth.consecutiveRateLimits > 0) {
-      return keyHealth.requestsInLastMinute >= keyHealth.estimatedCapacity * 0.3;
-    }
-    
-    return false;
+    console.log(`🔑 Loaded ${validKeys.length} valid API key(s)`);
+    return validKeys;
   }
 
-  // BULLETPROOF: Smart key selection with global throttling
-  async getNextAvailableKey() {
-  const now = Date.now();
-  
-  // Find ANY healthy key that's not rate-limited
-  for (let i = 0; i < this.keys.length; i++) {
-    const idx = (this.currentIndex + i) % this.keys.length;
-    const key = this.keyHealth[idx];
-    
-    if (key.isHealthy && key.rateLimitedUntil < now) {
-      // Global minimum delay only
-      const sinceGlobal = now - this.globalLastRequestTime;
-      if (sinceGlobal < 1000) await this.sleep(1000 - sinceGlobal);
-      
-      key.lastRequestTime = now;
-      key.totalRequests++;
-      key.requestTimestamps.push(now);
-      this.globalLastRequestTime = now;
-      this.currentIndex = (idx + 1) % this.keys.length;
-      
-      return { key: key.fullKey, index: idx, health: key };
-    }
+  initializeKeyStats() {
+    this.keys.forEach((key, index) => {
+      this.keyStats.set(index, {
+        healthy: true,
+        requests: 0,
+        errors: 0,
+        lastUsed: 0,
+        rateLimitUntil: 0,
+        consecutiveErrors: 0,
+        last401: 0 // Track 401 errors separately
+      });
+    });
   }
-  
-  throw new Error('No healthy keys available');
-}
 
-  async findLeastBadKey(now) {
-    const sorted = [...this.keyHealth].sort((a, b) => {
-      // Healthy first
-      if (a.isHealthy && !b.isHealthy) return -1;
-      if (!a.isHealthy && b.isHealthy) return 1;
+  // SMART KEY SELECTION WITH ROUND-ROBIN + HEALTH CHECK
+  getHealthyKey() {
+    const now = Date.now();
+    let bestKey = null;
+    let lowestUsage = Infinity;
+    
+    console.log(`🔄 Selecting key from ${this.keys.length} available keys...`);
+    
+    // ROUND 1: Find healthy keys with lowest usage
+    for (let i = 0; i < this.keys.length; i++) {
+      const stats = this.keyStats.get(i);
       
-      // Not rate limited
-      const aLimited = a.rateLimitedUntil > now;
-      const bLimited = b.rateLimitedUntil > now;
-      if (!aLimited && bLimited) return -1;
-      if (aLimited && !bLimited) return 1;
-      
-      // Soonest recovery
-      if (aLimited && bLimited) {
-        return a.rateLimitedUntil - b.rateLimitedUntil;
+      // Skip if rate limited
+      if (stats.rateLimitUntil > now) {
+        console.log(`  ⏭️ Key ${i + 1}: Rate limited (${Math.ceil((stats.rateLimitUntil - now)/1000)}s left)`);
+        continue;
       }
       
-      // Least recently used
-      return a.lastRequestTime - b.lastRequestTime;
-    });
-
-    const bestKey = sorted[0];
-    const index = this.keyHealth.indexOf(bestKey);
+      // Skip if too many consecutive errors
+      if (stats.consecutiveErrors >= 3) {
+        console.log(`  ⏭️ Key ${i + 1}: Too many errors (${stats.consecutiveErrors})`);
+        continue;
+      }
+      
+      // Skip if recent 401 error (invalid key)
+      if (stats.last401 > 0 && (now - stats.last401) < 300000) { // 5 min cooldown
+        console.log(`  ⏭️ Key ${i + 1}: Invalid/expired (401 error)`);
+        continue;
+      }
+      
+      // This key is healthy - prefer least used
+      if (stats.requests < lowestUsage) {
+        lowestUsage = stats.requests;
+        bestKey = i;
+      }
+    }
     
-    if (bestKey.rateLimitedUntil > now) {
-      const waitTime = bestKey.rateLimitedUntil - now;
-      console.warn(`⏳ Best key ${bestKey.id} rate limited. Waiting ${Math.ceil(waitTime/1000)}s...`);
+    // ROUND 2: If no healthy keys, find one that will recover soonest
+    if (bestKey === null) {
+      console.log(`  ⚠️ No healthy keys available, finding fastest recovery...`);
+      let soonest = Infinity;
+      
+      for (let i = 0; i < this.keys.length; i++) {
+        const stats = this.keyStats.get(i);
+        
+        // Skip permanently invalid keys (recent 401)
+        if (stats.last401 > 0 && (now - stats.last401) < 300000) {
+          continue;
+        }
+        
+        if (stats.rateLimitUntil < soonest) {
+          soonest = stats.rateLimitUntil;
+          bestKey = i;
+        }
+      }
+      
+      if (bestKey === null) {
+        throw new Error('❌ All keys exhausted or invalid');
+      }
+      
+      const waitTime = Math.max(0, this.keyStats.get(bestKey).rateLimitUntil - now);
+      if (waitTime > 0) {
+        console.log(`  ⏳ Waiting ${Math.ceil(waitTime/1000)}s for Key ${bestKey + 1} to recover...`);
+        // Don't actually wait here - let the caller handle it
+      }
+    }
+    
+    console.log(`  ✅ Selected Key ${bestKey + 1} (used ${this.keyStats.get(bestKey).requests} times)`);
+    return bestKey;
+  }
+
+  markKeyUsed(keyIndex, success = true, statusCode = null) {
+    const stats = this.keyStats.get(keyIndex);
+    stats.requests++;
+    stats.lastUsed = Date.now();
+    
+    if (success) {
+      stats.consecutiveErrors = 0;
+    } else {
+      stats.errors++;
+      stats.consecutiveErrors++;
+      
+      // Track 401 errors (invalid/expired keys)
+      if (statusCode === 401) {
+        stats.last401 = Date.now();
+        console.error(`🔐 Key ${keyIndex + 1} got 401 - may be invalid/expired`);
+      }
+    }
+  }
+
+  markKeyRateLimited(keyIndex, cooldownMs = 60000) {
+    const stats = this.keyStats.get(keyIndex);
+    stats.rateLimitUntil = Date.now() + cooldownMs;
+    console.log(`🚫 Key ${keyIndex + 1} rate limited (recovers in ${cooldownMs/1000}s)`);
+  }
+
+  // TOKEN CONSERVATION - CACHE IDENTICAL PROMPTS
+  getCacheKey(model, messages) {
+    const content = messages.map(m => m.content).join('||');
+    return `${model}:${content.substring(0, 200)}`;
+  }
+
+  // Messages API
+  messages = {
+    create: (params) => {
+      return this.createMessage(params);
+    }
+  };
+
+  async createMessage(params) {
+    const cacheKey = this.getCacheKey(params.model, params.messages);
+    
+    // CHECK CACHE
+    if (this.tokenCache.has(cacheKey)) {
+      this.cacheHits++;
+      const cached = this.tokenCache.get(cacheKey);
+      console.log(`💾 Cache hit (${this.cacheHits} hits, saved ~${this.cacheHits * 1000} tokens)`);
+      return cached;
+    }
+    
+    this.cacheMisses++;
+    
+    // RATE LIMITING - GLOBAL DELAY
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < this.globalDelay) {
+      const waitTime = this.globalDelay - timeSinceLastRequest;
       await this.sleep(waitTime);
     }
     
-    return {
-      key: bestKey.fullKey,
-      index,
-      health: bestKey
-    };
-  }
-
-  // FIXED: Proper rate limit handling with extended cooldown
-  markRateLimited(index, cooldownMs = null) {
-    const keyHealth = this.keyHealth[index];
-    const cooldown = cooldownMs || this.rateLimitCooldown;
+    // GET HEALTHY KEY
+    const keyIndex = this.getHealthyKey();
+    const apiKey = this.keys[keyIndex]; // SINGLE KEY, not concatenated
     
-    keyHealth.rateLimitedUntil = Date.now() + cooldown;
-    keyHealth.rateLimitCount++;
-    keyHealth.failedRequests++;
-    keyHealth.consecutiveRateLimits++;
-    
-    // Drastically reduce capacity
-    keyHealth.estimatedCapacity = Math.max(10, keyHealth.estimatedCapacity * 0.5);
-    
-    // Increase global backoff significantly
-    const limitedCount = this.keyHealth.filter(k => k.rateLimitedUntil > Date.now()).length;
-    this.globalBackoffMultiplier = Math.min(5.0, this.globalBackoffMultiplier * 1.5);
-    
-    console.error(`🚫 Key ${keyHealth.id} RATE LIMITED (cooldown: ${Math.ceil(cooldown/1000)}s, capacity reduced to ${keyHealth.estimatedCapacity}/min)`);
-    console.warn(`⚠️ Global backoff now ${this.globalBackoffMultiplier.toFixed(2)}x | ${limitedCount}/${this.keys.length} keys limited`);
-    
-    this.emit('rateLimited', { keyId: keyHealth.id, cooldown });
-  }
-
-  // FIXED: Proper success tracking
-  markSuccess(index, responseTimeMs) {
-    const keyHealth = this.keyHealth[index];
-    
-    // CRITICAL FIX: Increment success counter
-    keyHealth.successfulRequests++;
-    keyHealth.consecutiveErrors = 0;
-    keyHealth.consecutiveRateLimits = 0;
-    
-    // Gradually increase capacity (conservative)
-    keyHealth.estimatedCapacity = Math.min(60, keyHealth.estimatedCapacity * 1.02);
-    
-    // Track response time
-    keyHealth.responseTimes.push(responseTimeMs);
-    if (keyHealth.responseTimes.length > 20) {
-      keyHealth.responseTimes.shift();
-    }
-    keyHealth.averageResponseTime = 
-      keyHealth.responseTimes.reduce((a, b) => a + b, 0) / keyHealth.responseTimes.length;
-    
-    // Mark healthy
-    if (!keyHealth.isHealthy) {
-      keyHealth.isHealthy = true;
+    // WAIT IF KEY RECENTLY USED
+    const keyStats = this.keyStats.get(keyIndex);
+    const timeSinceKeyUsed = now - keyStats.lastUsed;
+    if (timeSinceKeyUsed < 1000) {
+      await this.sleep(1000 - timeSinceKeyUsed);
     }
     
-    // Gradually reduce global backoff on success
-    if (this.globalBackoffMultiplier > 1.0) {
-    const anyLimited = this.keyHealth.some(k => k.consecutiveRateLimits > 0);
-    this.globalBackoffMultiplier = anyLimited ? Math.max(1.0, this.globalBackoffMultiplier * 0.9) : 1.0;
-  }
-  }
-
-  markFailure(index, error) {
-    const keyHealth = this.keyHealth[index];
+    this.lastRequestTime = Date.now();
+    this.requestCount++;
     
-    keyHealth.failedRequests++;
-    keyHealth.consecutiveErrors++;
-    keyHealth.lastError = error.message?.substring(0, 100);
+    // CLEAN LOG - SINGLE LINE
+    console.log(`🤖 AI Request #${this.requestCount} | Key ${keyIndex + 1}/${this.keys.length} | Model: ${params.model} | Tokens: ${params.max_tokens}`);
     
-    // Be aggressive about marking unhealthy
-    if (keyHealth.consecutiveErrors >= 2) {
-      keyHealth.isHealthy = false;
-      console.error(`❌ Key ${keyHealth.id} marked UNHEALTHY (${keyHealth.consecutiveErrors} consecutive errors)`);
-      this.emit('keyUnhealthy', { keyId: keyHealth.id, error: error.message });
-    }
-  }
-
-  startRequestCleaner() {
-    setInterval(() => {
-      const now = Date.now();
-      this.keyHealth.forEach(key => {
-        key.requestTimestamps = key.requestTimestamps.filter(
-          t => now - t < 60000
-        );
-        key.requestsInLastMinute = key.requestTimestamps.length;
-      });
-    }, 10000);
-  }
-
-  startHealthMonitoring() {
-    setInterval(() => {
-      this.performHealthCheck();
-    }, this.healthCheckInterval);
-  }
-
-  performHealthCheck() {
-  const now = Date.now();
-  let healthyKeys = 0;
-  let rateLimitedKeys = 0;
-  let unhealthyKeys = 0;
-  
-  this.keyHealth.forEach(key => {
-    // Auto-recover from rate limits
-    if (key.rateLimitedUntil > 0 && key.rateLimitedUntil < now) {
-      key.rateLimitedUntil = 0;
-      key.consecutiveRateLimits = 0;
-    }
-    
-    // Auto-recover from errors after 5 minutes
-    if (!key.isHealthy && now - key.lastRequestTime > 300000) {
-      key.isHealthy = true;
-      key.consecutiveErrors = 0;
-    }
-    
-    // Count
-    if (key.rateLimitedUntil > now) rateLimitedKeys++;
-    else if (!key.isHealthy) unhealthyKeys++;
-    else healthyKeys++;
-  });
-  
-  // CRITICAL FIX: Only log if state changed
-  const currentState = `${healthyKeys}-${rateLimitedKeys}-${unhealthyKeys}`;
-  if (this.lastHealthState !== currentState) {
-    this.lastHealthState = currentState;
-  }
-  
-  if (healthyKeys === 0 && rateLimitedKeys === 0) {
-    console.error('🚨 CRITICAL: No healthy keys available!');
-    this.emit('allKeysUnhealthy');
-  }
-}
-
-  logKeyStatus() {
-    console.log('📊 Key Status:');
-    this.keyHealth.forEach(key => {
-      const status = key.rateLimitedUntil > Date.now() ? '🚫 Rate Limited' :
-                     !key.isHealthy ? '❌ Unhealthy' :
-                     '✅ Healthy';
-      const successRate = key.totalRequests > 0 
-        ? Math.round((key.successfulRequests / key.totalRequests) * 100)
-        : 0;
-      console.log(`   Key ${key.id}: ${status} | ${key.successfulRequests}/${key.totalRequests} (${successRate}%) | ${key.requestsInLastMinute}/min`);
-    });
-  }
-
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  getStats() {
-    const now = Date.now();
-    return this.keyHealth.map(key => ({
-      id: key.id,
-      masked: key.key,
-      status: key.rateLimitedUntil > now ? 'rate_limited' :
-              !key.isHealthy ? 'unhealthy' : 'healthy',
-      totalRequests: key.totalRequests,
-      successfulRequests: key.successfulRequests,
-      successRate: key.totalRequests > 0 
-        ? `${Math.round(key.successfulRequests / key.totalRequests * 100)}%` 
-        : '0%',
-      avgResponseTime: `${Math.round(key.averageResponseTime)}ms`,
-      requestsPerMin: key.requestsInLastMinute,
-      capacity: key.estimatedCapacity
-    }));
-  }
-}
-
-class AIClient {
-  constructor(apiKey) {
-    this.keyManager = new APIKeyManager(
-      apiKey || process.env.OPENROUTER_API_KEY
-    );
-    
-    this.baseURL = 'https://openrouter.ai/api/v1';
-    this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
-    
-    // Global settings
-    this.maxRetries = 22; // Keep for compatibility
-    this.baseTimeout = 120000; // 2 minutes
-    
-    // Event listeners
-    this.keyManager.on('rateLimited', (data) => {
-      console.warn(`⚠️ Rate limit event: Key ${data.keyId} (cooldown: ${Math.ceil(data.cooldown/1000)}s)`);
-    });
-    
-    this.keyManager.on('keyUnhealthy', (data) => {
-      console.error(`⚠️ Key ${data.keyId} unhealthy: ${data.error}`);
-    });
-    
-    this.keyManager.on('allKeysUnhealthy', () => {
-      console.error('🚨 CRITICAL: All keys unhealthy or rate limited!');
-    });
-    
-    console.log('✅ AIClient initialized with bulletproof multi-key support');
-  }
-
-  get messages() {
-    return {
-      create: async (params) => {
-        const maxAttempts = Math.min(this.keyManager.keys.length * 3, 15);
-        let attempt = 0;
-        let lastError = null;
-
-        while (attempt < maxAttempts) {
-          attempt++;
-          
-          try {
-            console.log(`   Attempt ${attempt}/${maxAttempts}...`);
-            
-            // Get next available key (with built-in throttling)
-            const keyInfo = await this.keyManager.getNextAvailableKey();
-            
-            // Make request
-            const startTime = Date.now();
-            const result = await this.makeRequest(params, keyInfo);
-            const responseTime = Date.now() - startTime;
-            
-            // CRITICAL: Mark success
-            this.keyManager.markSuccess(keyInfo.index, responseTime);
-            
-            return result;
-            
-          } catch (error) {
-            lastError = error;
-            
-            // Get the key index that just failed
-            const failedIndex = this.keyManager.currentIndex === 0 
-              ? this.keyManager.keys.length - 1 
-              : this.keyManager.currentIndex - 1;
-            
-            const status = error.response?.status;
-            const errorMsg = error.message?.toLowerCase() || '';
-            
-            // Detect rate limiting
-            const isRateLimit = status === 429 || 
-                               errorMsg.includes('429') ||
-                               errorMsg.includes('rate limit') ||
-                               errorMsg.includes('too many requests');
-            
-            if (isRateLimit) {
-              const retryAfter = error.response?.headers['retry-after'];
-              const cooldown = retryAfter ? parseInt(retryAfter) * 1000 : null;
-              
-              this.keyManager.markRateLimited(failedIndex, cooldown);
-              console.error(`❌ Rate limit hit on attempt ${attempt}`);
-              
-              // Exponential backoff on rate limits
-              await this.sleep(5000 * attempt);
-              continue;
-            }
-            
-            // Other errors
-            this.keyManager.markFailure(failedIndex, error);
-            console.error(`❌ Request failed (attempt ${attempt}): ${error.message?.substring(0, 100)}`);
-            
-            // Exponential backoff
-            if (attempt < maxAttempts) {
-              const delay = Math.min(10000, 2000 * attempt);
-              console.log(`   ⏳ Backing off ${delay/1000}s...`);
-              await this.sleep(delay);
-            }
-          }
-        }
-
-        // Failed after all attempts
-        console.error(`❌ Request failed after ${maxAttempts} attempts`);
-        console.log('📊 Final key stats:');
-        this.keyManager.logKeyStatus();
-        
-        throw new Error(`Failed after ${maxAttempts} attempts. Last error: ${lastError?.message}`);
-      }
-    };
-  }
-
-  async makeRequest(params, keyInfo) {
-    const openRouterRequest = {
-      model: params.model || this.model,
-      messages: params.messages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-      })),
-      max_tokens: params.max_tokens || 4000,
-      temperature: params.temperature !== undefined ? params.temperature : 0.7,
-      stream: false
-    };
-
-    const response = await axios.post(
-      `${this.baseURL}/chat/completions`,
-      openRouterRequest,
-      {
-        headers: {
-          'Authorization': `Bearer ${keyInfo.key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.BACKEND_URL || 'http://localhost:5000',
-          'X-Title': 'Launch AI'
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/chat/completions`,
+        {
+          model: params.model,
+          max_tokens: params.max_tokens,
+          temperature: params.temperature || 0.3,
+          messages: params.messages
         },
-        timeout: this.baseTimeout,
-        validateStatus: (status) => status < 500
-      }
-    );
-
-    // Check for errors
-    if (response.status !== 200) {
-      const error = new Error(
-        response.data?.error?.message || 
-        `Request failed with status ${response.status}`
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`, // CRITICAL: Single key only
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000',
+            'X-Title': 'Launch AI'
+          },
+          timeout: 60000
+        }
       );
-      error.response = response;
-      error.status = response.status;
+      
+      this.markKeyUsed(keyIndex, true);
+      
+      // CACHE RESPONSE
+      const result = {
+        content: [{ text: response.data.choices[0].message.content }],
+        usage: response.data.usage
+      };
+      
+      this.tokenCache.set(cacheKey, result);
+      
+      // CLEAN SUCCESS LOG
+      console.log(`✅ Success | Used: ${response.data.usage?.total_tokens || '?'} tokens | Cache: ${this.cacheHits}/${this.cacheHits + this.cacheMisses}`);
+      
+      return result;
+      
+    } catch (error) {
+      this.errorCount++;
+      const status = error.response?.status;
+      
+      this.markKeyUsed(keyIndex, false, status);
+      
+      // HANDLE 401 UNAUTHORIZED (Invalid/Expired Key)
+      if (status === 401) {
+        console.error(`❌ 401 Unauthorized | Key ${keyIndex + 1} | ${error.response?.data?.error?.message || 'Invalid API key'}`);
+        
+        // Retry with different key if available
+        if (this.keys.length > 1 && keyStats.consecutiveErrors < 3) {
+          console.log(`🔄 Retrying with different key...`);
+          await this.sleep(1000);
+          return this.createMessage(params);
+        }
+        
+        throw new Error(`API Key Error: ${error.response?.data?.error?.message || 'All keys invalid/expired'}`);
+      }
+      
+      // HANDLE 429 RATE LIMIT
+      if (status === 429) {
+        this.markKeyRateLimited(keyIndex, 120000); // 2 min cooldown
+        console.error(`⚠️ Rate limit | Key ${keyIndex + 1} | Retrying with different key...`);
+        
+        // Retry with different key if available
+        if (this.keys.length > 1) {
+          await this.sleep(3000);
+          return this.createMessage(params);
+        }
+        
+        throw new Error('Rate limit: All keys exhausted');
+      }
+      
+      // HANDLE 500/502/503 SERVER ERRORS
+      if (status >= 500) {
+        console.error(`❌ Server error ${status} | Key ${keyIndex + 1}`);
+        throw new Error(`Server error: ${status}`);
+      }
+      
+      // OTHER ERRORS
+      console.error(`❌ Request failed | Status: ${status || 'Network'} | Key ${keyIndex + 1} | ${error.message}`);
       throw error;
     }
+  }
 
-    // Validate response
-    if (!response.data?.choices?.[0]?.message?.content) {
-      throw new Error('Invalid response: missing content');
-    }
-
+  // STATS SUMMARY
+  getStats() {
+    const uptime = Math.round((Date.now() - this.startTime) / 1000);
+    
+    const keyStatsSummary = [];
+    this.keyStats.forEach((stats, index) => {
+      const errorRate = stats.requests > 0 ? Math.round((stats.errors / stats.requests) * 100) : 0;
+      const has401 = stats.last401 > 0;
+      keyStatsSummary.push({
+        key: index + 1,
+        requests: stats.requests,
+        errors: stats.errors,
+        errorRate: `${errorRate}%`,
+        healthy: stats.consecutiveErrors < 3 && !has401,
+        status: has401 ? '🔐 Invalid' : (stats.consecutiveErrors >= 3 ? '❌ Failed' : '✅ Healthy')
+      });
+    });
+    
     return {
-      content: [{
-        type: 'text',
-        text: response.data.choices[0].message.content
-      }],
-      id: response.data.id,
-      model: response.data.model,
-      role: 'assistant',
-      stop_reason: 'end_turn'
+      uptime: `${uptime}s`,
+      totalRequests: this.requestCount,
+      errors: this.errorCount,
+      errorRate: `${this.requestCount > 0 ? Math.round((this.errorCount / this.requestCount) * 100) : 0}%`,
+      cacheHits: this.cacheHits,
+      cacheMisses: this.cacheMisses,
+      cacheHitRate: `${this.cacheHits + this.cacheMisses > 0 ? Math.round((this.cacheHits / (this.cacheHits + this.cacheMisses)) * 100) : 0}%`,
+      tokensSaved: `~${this.cacheHits * 1000}`,
+      keys: keyStatsSummary
     };
+  }
+
+  printStats() {
+    const stats = this.getStats();
+    console.log('\n📊 AI CLIENT STATS');
+    console.log('═'.repeat(50));
+    console.log(`Uptime: ${stats.uptime}`);
+    console.log(`Total Requests: ${stats.totalRequests} (${stats.errors} errors, ${stats.errorRate})`);
+    console.log(`Cache: ${stats.cacheHits} hits / ${stats.cacheMisses} misses (${stats.cacheHitRate} hit rate)`);
+    console.log(`Tokens Saved: ${stats.tokensSaved}`);
+    console.log('\nKey Health:');
+    stats.keys.forEach(key => {
+      console.log(`  Key ${key.key}: ${key.requests} req, ${key.errors} err (${key.errorRate}) ${key.status}`);
+    });
+    console.log('═'.repeat(50) + '\n');
   }
 
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Alias for compatibility
+  // BACKWARD COMPATIBILITY
   async create(params) {
-    return this.messages.create(params);
-  }
-
-  getKeyStats() {
-    return this.keyManager.getStats();
-  }
-
-  logStatus() {
-    this.keyManager.logKeyStatus();
+    return this.createMessage(params);
   }
 }
 
