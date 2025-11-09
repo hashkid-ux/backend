@@ -6,7 +6,7 @@ const aiClient = require('../../services/aiClient');
 class PromptStrategistAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 

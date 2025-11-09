@@ -1,7 +1,5 @@
 // services/aiClient.js
-// Smart multi-key rotation with automatic fallback
-
-const Anthropic = require('@anthropic-ai/sdk');
+// Native OpenRouter client - NO Anthropic SDK
 
 class KeyRotationManager {
   constructor() {
@@ -14,7 +12,7 @@ class KeyRotationManager {
       return;
     }
     
-    console.log(`✅ Loaded ${this.keys.length} API keys`);
+    console.log(`✅ Loaded ${this.keys.length} OpenRouter API keys`);
     
     this.keyStats = this.keys.map((key, index) => ({
       index,
@@ -27,7 +25,7 @@ class KeyRotationManager {
     }));
     
     this.fallbackMode = false;
-    setInterval(() => this.resetBlockedKeys(), 300000); // Reset every 5min
+    setInterval(() => this.resetBlockedKeys(), 300000);
   }
 
   getNextKey() {
@@ -56,11 +54,13 @@ class KeyRotationManager {
     if (!stat) return;
 
     stat.failures++;
-    const isRateLimit = error?.status === 429 || error?.message?.includes('rate limit');
+    const isRateLimit = error?.status === 429 || 
+                       error?.message?.includes('rate limit') ||
+                       error?.message?.includes('429');
 
     if (isRateLimit) {
       stat.isBlocked = true;
-      stat.blockUntil = Date.now() + 600000; // Block 10min
+      stat.blockUntil = Date.now() + 600000;
       console.warn(`🔴 Key ${stat.index + 1} blocked - ${this.getAvailableCount()} keys left`);
     }
   }
@@ -95,14 +95,13 @@ class KeyRotationManager {
   }
 }
 
-// Singleton instance
 const keyManager = new KeyRotationManager();
 
 class aiClient {
-  constructor(apiKey = null) {
-    // Use key manager instead of single key
+  constructor() {
     this.keyManager = keyManager;
     this.fallbackMode = keyManager.fallbackMode;
+    this.baseURL = 'https://openrouter.ai/api/v1/chat/completions';
     
     if (this.fallbackMode) {
       console.warn('⚠️ AI Client in fallback mode');
@@ -111,21 +110,32 @@ class aiClient {
     }
 
     this.initialized = true;
-    this.clientCache = new Map(); // Cache clients per key
   }
 
-  getClient(key) {
-    if (!this.clientCache.has(key)) {
-      this.clientCache.set(key, new Anthropic({ 
-        apiKey: key,
-        baseURL: 'https://openrouter.ai/api/v1'
-      }));
-    }
-    return this.clientCache.get(key);
+  // Convert Anthropic-style params to OpenRouter format
+  convertParams(params) {
+    return {
+      model: params.model,
+      messages: params.messages,
+      max_tokens: params.max_tokens || 4000,
+      temperature: params.temperature !== undefined ? params.temperature : 0.7,
+      ...(params.stream !== undefined && { stream: params.stream })
+    };
+  }
+
+  // Convert OpenRouter response to Anthropic-style
+  convertResponse(data) {
+    return {
+      content: [{
+        type: 'text',
+        text: data.choices?.[0]?.message?.content || ''
+      }],
+      model: data.model,
+      usage: data.usage
+    };
   }
 
   async create(params) {
-    // Fallback mode: return mock
     if (this.fallbackMode || !this.initialized) {
       console.log('🔧 Fallback mode - mock response');
       return this.getMockResponse(params);
@@ -142,29 +152,47 @@ class aiClient {
       }
 
       try {
-        const client = this.getClient(currentKey);
+        const body = this.convertParams(params);
         
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 45000);
 
-        const response = await client.messages.create({
-          ...params,
+        const response = await fetch(this.baseURL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentKey}`,
+            'HTTP-Referer': process.env.FRONTEND_URL || 'http://localhost:3000',
+            'X-Title': 'Launch AI'
+          },
+          body: JSON.stringify(body),
           signal: controller.signal
         });
 
         clearTimeout(timeoutId);
-        return response;
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw {
+            status: response.status,
+            message: error.error?.message || `HTTP ${response.status}`
+          };
+        }
+
+        const data = await response.json();
+        return this.convertResponse(data);
 
       } catch (error) {
         this.keyManager.recordFailure(currentKey, error);
         
-        const isRateLimit = error?.status === 429 || error?.message?.includes('rate limit');
+        const isRateLimit = error?.status === 429 || 
+                           error?.message?.includes('rate limit');
         
         if (isRateLimit) {
           console.warn(`⚠️ Rate limit on key ${attempt}/${maxAttempts} - rotating`);
           
           if (attempt < maxAttempts) {
-            await new Promise(r => setTimeout(r, 2000)); // 2s delay
+            await new Promise(r => setTimeout(r, 2000));
             continue;
           }
         } else {
@@ -197,7 +225,6 @@ class aiClient {
   }
 
   getMockJSONResponse(prompt) {
-    // Architecture
     if (prompt.includes('architecture') || prompt.includes('Plan')) {
       return {
         content: [{
@@ -206,8 +233,7 @@ class aiClient {
             totalFiles: 12,
             fileStructure: {
               routes: [
-                { name: 'health', path: 'routes/health.js', purpose: 'Health check', priority: 'critical' },
-                { name: 'auth', path: 'routes/auth.js', purpose: 'Auth', priority: 'critical' }
+                { name: 'health', path: 'routes/health.js', purpose: 'Health check', priority: 'critical' }
               ],
               controllers: [
                 { name: 'authController', path: 'controllers/authController.js', purpose: 'Auth logic', methods: ['register', 'login'], priority: 'critical' }
@@ -215,7 +241,6 @@ class aiClient {
               middleware: [
                 { name: 'auth', path: 'middleware/auth.js', purpose: 'JWT', priority: 'critical' }
               ],
-              models: [],
               utils: [
                 { name: 'jwt', path: 'utils/jwt.js', purpose: 'JWT utils', priority: 'high' }
               ],
@@ -223,19 +248,12 @@ class aiClient {
                 { name: 'database', path: 'config/database.js', purpose: 'DB config', priority: 'critical' }
               ]
             },
-            techStack: {
-              runtime: 'Node.js',
-              framework: 'Express',
-              database: 'PostgreSQL',
-              orm: 'Prisma',
-              auth: 'JWT'
-            }
+            techStack: { runtime: 'Node.js', framework: 'Express', database: 'PostgreSQL', orm: 'Prisma', auth: 'JWT' }
           })
         }]
       };
     }
 
-    // Schema
     if (prompt.includes('schema') || prompt.includes('database')) {
       return {
         content: [{
@@ -247,28 +265,20 @@ class aiClient {
                 purpose: 'User accounts',
                 fields: [
                   { name: 'id', type: 'String', attributes: '@id @default(uuid())', description: 'Primary key' },
-                  { name: 'email', type: 'String', attributes: '@unique', description: 'Email' },
-                  { name: 'password', type: 'String?', attributes: '', description: 'Password' },
-                  { name: 'createdAt', type: 'DateTime', attributes: '@default(now())', description: 'Created' },
-                  { name: 'updatedAt', type: 'DateTime', attributes: '@updatedAt', description: 'Updated' }
+                  { name: 'email', type: 'String', attributes: '@unique', description: 'Email' }
                 ],
-                indexes: [{ fields: ['email'], type: 'unique' }],
-                relations: []
+                indexes: [{ fields: ['email'], type: 'unique' }]
               }
-            ],
-            optimizations: [
-              { type: 'index', table: 'User', reason: 'Fast email lookup', impact: 'high' }
             ]
           })
         }]
       };
     }
 
-    // Generic JSON
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify({ success: true, fallback: true, data: {} })
+        text: JSON.stringify({ success: true, fallback: true })
       }]
     };
   }
@@ -279,40 +289,23 @@ class aiClient {
 const router = express.Router();
 
 router.get('/', (req, res) => {
-  res.json({ message: 'API endpoint', timestamp: new Date().toISOString() });
+  res.json({ message: 'API endpoint' });
 });
 
 module.exports = router;`;
-    }
-
-    if (prompt.includes('controller')) {
-      return `exports.handler = async (req, res) => {
-  try {
-    res.json({ success: true, data: {} });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};`;
     }
 
     if (prompt.includes('React') || prompt.includes('component')) {
       return `import React from 'react';
 
 function Component() {
-  return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold">Component</h1>
-    </div>
-  );
+  return <div className="p-4"><h1>Component</h1></div>;
 }
 
 export default Component;`;
     }
 
-    return `// Fallback template
-// Replace with actual implementation
-
-module.exports = {};`;
+    return `// Fallback template\nmodule.exports = {};`;
   }
 
   get messages() {

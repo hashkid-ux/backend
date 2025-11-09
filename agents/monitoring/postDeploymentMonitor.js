@@ -9,7 +9,7 @@ class PostDeploymentMonitor {
   constructor(tier = 'free', projectId = null) {
     this.tier = tier;
     this.projectId = projectId;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
     this.monitoringSchedule = this.getMonitoringSchedule(tier);

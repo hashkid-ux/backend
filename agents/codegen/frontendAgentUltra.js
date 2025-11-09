@@ -6,8 +6,8 @@ const aiClient = require('../../services/aiClient');
 class FrontendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
-    this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
+    this.client = new aiClient();
+    this.model = 'qwen/qwen3-235b-a22b:free';
     this.maxRetries = 3;
   }
 

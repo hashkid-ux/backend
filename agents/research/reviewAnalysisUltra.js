@@ -8,7 +8,7 @@ const WebScraperUltra = require('./webScraperUltra');
 class ReviewAnalysisAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.sentiment = new Sentiment();
     this.scraper = new WebScraperUltra();

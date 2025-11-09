@@ -9,7 +9,7 @@ class DeployAgentUltra {
   constructor(tier = 'free', projectId = null) {
     this.tier = tier;
     this.projectId = projectId;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
   }
 

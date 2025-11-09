@@ -7,7 +7,7 @@ const axios = require('axios');
 class TrendAnalysisAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.maxRetries = 3;
   }

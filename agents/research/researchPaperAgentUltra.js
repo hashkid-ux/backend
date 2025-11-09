@@ -8,7 +8,7 @@ const WebScraperUltra = require('./webScraperUltra');
 class ResearchPaperAgentUltra {
   constructor(tier = 'premium') {
     this.tier = tier;
-    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient();
     this.model = 'qwen/qwen3-235b-a22b:free';
     this.scraper = new WebScraperUltra();
   }
