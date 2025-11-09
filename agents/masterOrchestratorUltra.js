@@ -229,7 +229,7 @@ class MasterOrchestrator {
     }
 
     // Step 5: Research Papers (PREMIUM)
-    let paperData = null;
+    /*let paperData = null;
     if (this.tier === 'premium') {
       console.log('📚 Step 1.5: Research Papers...');
       paperData = await this.safeRetry(
@@ -245,7 +245,7 @@ class MasterOrchestrator {
         console.log(`✅ Papers: ${results.researchPapers.papers_analyzed || 0} analyzed`);
       }
       await this.sleep(this.phaseDelay);
-    }
+    }*/
 
     // Step 6: Strategic Analysis
     console.log('🎯 Step 1.6: Strategic Analysis...');
@@ -272,7 +272,7 @@ class MasterOrchestrator {
       competitor_analyses: results.competitors?.individual_analyses || [],
       review_summary: reviewData,
       trend_list: trendData?.emerging_trends || [],
-      papers_found: paperData?.papers_analyzed || 0
+      //papers_found: paperData?.papers_analyzed || 0
     };
 
     console.log('✅ PHASE 1 COMPLETE (Sequential + Safe)');

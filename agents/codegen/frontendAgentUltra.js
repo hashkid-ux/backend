@@ -288,10 +288,10 @@ CRITICAL: Plan based on ACTUAL features needed, not generic templates. If simple
 // === USAGE: Replace existing generators ===
 
 async generateDynamicFiles(projectData, architecture) {
-  console.log('🔨 Generating files dynamically...');
+  console.log('🔨 Generating files (OPTIMIZED)...');
   const files = {};
 
-  // CORE FILES (templates - no AI)
+  // CORE FILES (no AI)
   files['public/index.html'] = this.generateIndexHtml(projectData);
   files['src/index.js'] = this.generateReactIndex(projectData);
   files['src/index.css'] = this.generateTailwindCSS();
@@ -299,110 +299,121 @@ async generateDynamicFiles(projectData, architecture) {
   files['tailwind.config.js'] = this.generateTailwindConfig();
   files['README.md'] = this.generateREADME(projectData);
 
-  // APP.JS - Direct generation (no wrapper)
-  try {
-    let appCode = await this.generateAppComponent(projectData, architecture);
-    appCode = this.aggressiveClean(appCode);
-    
-    if (appCode && appCode.length > 100) {
-      files['src/App.js'] = appCode;
-    } else {
-      files['src/App.js'] = this.getFallbackApp(projectData, architecture);
+  // APP.JS - fallback template
+  files['src/App.js'] = this.getFallbackApp(projectData, architecture);
+
+  // PAGES - Batch or template
+  const pages = architecture.fileStructure.pages || [];
+  if (pages.length > 2) {
+    console.log(`📦 Batch generating ${pages.length} pages...`);
+    const batchedPages = await this.generatePagesBatch(pages, projectData);
+    Object.assign(files, batchedPages);
+  } else {
+    for (const page of pages) {
+      files[page.path] = this.getFallbackPage(page, projectData);
     }
-  } catch (error) {
-    console.error('App generation failed:', error.message);
-    files['src/App.js'] = this.getFallbackApp(projectData, architecture);
   }
 
-  // PAGES - Direct generation
-  for (const page of architecture.fileStructure.pages || []) {
-  try {
-    let code = await this.generatePage(page, projectData);
-    code = this.aggressiveClean(code);
-    
-    // Validate
-    const validation = this.validateGeneratedCode(code, page.path);
-    
-    if (validation.valid) {
-      files[page.path] = code;
-      console.log(`✅ ${page.name} generated successfully`);
-    } else {
-      // Try AI repair (2 attempts)
-      console.log(`⚠️ ${page.name} validation failed, attempting repair...`);
-      let repaired = code;
-      let repairSuccess = false;
-      
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          repaired = await this.aiRepairCode(code, validation.errors, page.path);
-          const revalidation = this.validateGeneratedCode(repaired, page.path);
-          
-          if (revalidation.valid) {
-            files[page.path] = repaired;
-            console.log(`✅ ${page.name} repaired on attempt ${attempt}`);
-            repairSuccess = true;
-            break;
-          }
-        } catch (repairError) {
-          console.warn(`⚠️ Repair attempt ${attempt} failed`);
-        }
-      }
-      
-      if (!repairSuccess) {
-        console.error(`❌ ${page.name} using fallback template`);
-        files[page.path] = this.getFallbackPage(page, projectData);
-      }
-    }
-  } catch (error) {
-    console.error(`❌ ${page.name} generation failed:`, error.message);
-    files[page.path] = this.getFallbackPage(page, projectData);
-  }
-}
-
-  // COMPONENTS - Direct generation
+  // COMPONENTS - template only
   for (const component of architecture.fileStructure.components || []) {
-    try {
-      let code = await this.generateComponent(component, projectData);
-      code = this.aggressiveClean(code);
-      files[component.path] = code;
-    } catch (error) {
-      files[component.path] = this.getFallbackComponent(component);
-    }
+    files[component.path] = this.getFallbackComponent(component);
   }
 
-  // SERVICES
+  // SERVICES - template
   for (const service of architecture.fileStructure.services || []) {
-    try {
-      files[service.path] = await this.generateService(service, projectData);
-    } catch (error) {
-      files[service.path] = `export default {};`;
-    }
+    files[service.path] = this.getTemplateService(service);
   }
 
-  // CONTEXTS
-  for (const context of architecture.fileStructure.contexts || []) {
-    try {
-      files[context.path] = await this.generateContext(context, projectData);
-    } catch (error) {
-      files[context.path] = `export default {};`;
-    }
-  }
-
-  // UTILS (templates)
+  // UTILS - template
   for (const util of architecture.fileStructure.utils || []) {
     files[util.path] = await this.generateUtil(util, projectData);
   }
 
-  // HOOKS
-  for (const hook of architecture.fileStructure.hooks || []) {
-    try {
-      files[hook.path] = await this.generateHook(hook, projectData);
-    } catch (error) {
-      files[hook.path] = `export default function useCustomHook() { return {}; }`;
+  return files;
+}
+
+// NEW METHOD: Add this after generateDynamicFiles
+async generatePagesBatch(pages, projectData) {
+  if (pages.length === 0) return {};
+  
+  const prompt = `Generate ${pages.length} React pages. Return valid JSON only.
+
+PROJECT: ${projectData.projectName}
+
+PAGES:
+${pages.map((p, i) => `${i + 1}. ${p.name} - ${p.purpose}`).join('\n')}
+
+Return JSON:
+{
+  "pages": {
+    "${pages[0].path}": "import React from 'react'; function ${pages[0].name}() { return <div>...</div>; } export default ${pages[0].name};",
+    "${pages[1]?.path || 'src/pages/Page2.jsx'}": "..."
+  }
+}
+
+Each page: imports, Helmet, export default. No markdown.`;
+
+  try {
+    const response = await this.client.messages.create({
+      model: this.model,
+      max_tokens: 8000,
+      temperature: 0.1,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const content = response.content[0].text;
+    const cleaned = this.extractCleanJSON(content);
+    
+    if (cleaned) {
+      const parsed = JSON.parse(cleaned);
+      console.log(`✅ Generated ${Object.keys(parsed.pages || {}).length} pages in 1 call`);
+      return parsed.pages || {};
     }
+  } catch (error) {
+    console.error('Batch failed:', error.message);
   }
 
-  return files;
+  const fallback = {};
+  pages.forEach(page => {
+    fallback[page.path] = this.getFallbackPage(page, projectData);
+  });
+  return fallback;
+}
+
+// NEW METHOD: Template service (no AI)
+getTemplateService(serviceConfig) {
+  return `import axios from 'axios';
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+apiClient.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = \`Bearer \${token}\`;
+  }
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;`;
 }
 
 // === FALLBACK GENERATORS ===

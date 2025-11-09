@@ -218,57 +218,180 @@ CRITICAL: Plan based on ACTUAL features needed. If simple project, fewer files.`
   }
 
   async generateDynamicBackendFiles(projectData, databaseSchema, architecture) {
-  console.log('🔨 Generating backend files with AI validation...');
+  console.log('🔨 Backend: Using templates (OPTIMIZED)');
   const files = {};
-  const fixStats = { total: 0, fixed: 0, failed: 0, attempts: 0 };
 
-  // Core files (no validation needed - templates)
+  // CORE
   files['server.js'] = await this.generateServerJs(projectData, architecture);
   files['package.json'] = this.generateBackendPackageJson(projectData);
   files['.env.example'] = this.generateEnvExample(projectData);
   files['README.md'] = this.generateBackendREADME(projectData);
 
-  // AI-generated files (VALIDATE EACH)
-  const generators = [
-    { items: architecture.fileStructure.routes || [], fn: this.generateRoute },
-    { items: architecture.fileStructure.controllers || [], fn: this.generateController },
-    { items: architecture.fileStructure.middleware || [], fn: this.generateMiddleware },
-    { items: architecture.fileStructure.utils || [], fn: this.generateUtility },
-    { items: architecture.fileStructure.config || [], fn: this.generateConfig }
-
-  ];
-
-  for (const { items, fn } of generators) {
-    for (const item of items) {
-      fixStats.total++;
-      
-      // Generate code
-      let code = await fn.call(this, item, projectData, databaseSchema);
-      
-      // AI-powered validation & auto-fix
-      const result = await this.validateAndAutoFix(code, item.path);
-      
-      files[item.path] = result.code;
-      fixStats.attempts += result.attempts;
-      
-      if (result.valid && result.attempts > 0) {
-        fixStats.fixed++;
-        console.log(`🔧 ${item.path} auto-fixed by AI`);
-      } else if (!result.valid) {
-        fixStats.failed++;
-        console.error(`❌ ${item.path} using fallback`);
-      }
+  // ROUTES - mostly templates
+  for (const route of architecture.fileStructure.routes || []) {
+    if (route.name === 'health' || route.name === 'auth') {
+      files[route.path] = this.getTemplateRoute(route);
+    } else {
+      files[route.path] = await this.generateRoute(route, projectData);
     }
   }
 
-  // Utilities use complete implementations (no AI needed)
+  // CONTROLLERS - template auth, AI custom
+  for (const controller of architecture.fileStructure.controllers || []) {
+    if (controller.name.toLowerCase().includes('auth')) {
+      files[controller.path] = this.getTemplateAuthController();
+    } else {
+      files[controller.path] = await this.generateController(controller, projectData, databaseSchema);
+    }
+  }
+
+  // MIDDLEWARE - all templates
+  for (const middleware of architecture.fileStructure.middleware || []) {
+    files[middleware.path] = this.getTemplateMiddleware(middleware);
+  }
+
+  // UTILS - all templates
   for (const util of architecture.fileStructure.utils || []) {
     files[util.path] = await this.generateUtility(util, projectData);
   }
 
-  console.log(`📊 Fix Stats: ${fixStats.fixed}/${fixStats.total} fixed, ${fixStats.failed} fallbacks, ${fixStats.attempts} total AI attempts`);
-  
   return files;
+}
+
+// ADD THESE NEW METHODS at the end of the class:
+
+getTemplateRoute(routeConfig) {
+  if (routeConfig.name === 'health') {
+    return `const express = require('express');
+const router = express.Router();
+
+router.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+module.exports = router;`;
+  }
+
+  if (routeConfig.name === 'auth') {
+    return `const express = require('express');
+const router = express.Router();
+const authController = require('../controllers/authController');
+
+router.post('/register', authController.register);
+router.post('/login', authController.login);
+router.get('/me', authController.getCurrentUser);
+
+module.exports = router;`;
+  }
+
+  return `const express = require('express');
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  res.json({ message: '${routeConfig.name} endpoint' });
+});
+
+module.exports = router;`;
+}
+
+getTemplateAuthController() {
+  return `const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { prisma } = require('../config/database');
+
+exports.register = async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    
+    const exists = await prisma.user.findUnique({ where: { email } });
+    if (exists) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    const user = await prisma.user.create({
+      data: { email, password: hashedPassword, name }
+    });
+    
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    res.status(201).json({ 
+      token, 
+      user: { id: user.id, email: user.email, name: user.name } 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Registration failed' });
+  }
+};
+
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    res.json({ 
+      token, 
+      user: { id: user.id, email: user.email, name: user.name } 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+};
+
+exports.getCurrentUser = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ 
+      where: { id: req.user.id },
+      select: { id: true, email: true, name: true, createdAt: true }
+    });
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+};`;
+}
+
+getTemplateMiddleware(middlewareConfig) {
+  if (middlewareConfig.name === 'auth' || middlewareConfig.name.includes('auth')) {
+    return `const jwt = require('jsonwebtoken');
+
+module.exports = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};`;
+  }
+
+  return `module.exports = (req, res, next) => {
+  // ${middlewareConfig.purpose}
+  next();
+};`;
 }
   
   async generateServerJs(projectData, architecture) {
