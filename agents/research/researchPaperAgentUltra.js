@@ -373,42 +373,42 @@ Start with { and end with }
 }
 
 extractCleanJSON(text) {
-  // Remove markdown code blocks
+  // Remove markdown
   text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
   
+  // Remove artifacts
+  text = text
+    .replace(/<\|[^|]*\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|eot_id\|/gi, '');
+  
   // Find JSON boundaries
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
   
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return null;
-  }
+  if (start === -1 || end === -1 || end <= start) return null;
   
-  let jsonStr = text.substring(firstBrace, lastBrace + 1);
+  let json = text.substring(start, end + 1);
   
-  // Remove trailing commas
-  jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+  // Fix common issues
+  json = json
+    .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ');
   
-  // Remove comments
-  jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
-  jsonStr = jsonStr.replace(/\/\/.*/g, '');
-  
-  // CRITICAL: Truncate at position that caused error (8574)
-  // This prevents malformed content after valid JSON
+  // Try to parse
   try {
-    // Test parse
-    JSON.parse(jsonStr);
-    return jsonStr;
+    JSON.parse(json);
+    return json;
   } catch (e) {
-    // If error at specific position, truncate there
+    // If error, try to truncate at error position
     const match = e.message.match(/position (\d+)/);
     if (match) {
       const pos = parseInt(match[1]);
-      // Find last complete object before error
-      const truncated = jsonStr.substring(0, pos);
-      const lastComplete = truncated.lastIndexOf('}');
-      if (lastComplete > 0) {
-        return jsonStr.substring(0, lastComplete + 1);
+      const lastBrace = json.lastIndexOf('}', pos);
+      if (lastBrace > 0) {
+        return json.substring(0, lastBrace + 1);
       }
     }
     return null;

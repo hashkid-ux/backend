@@ -402,34 +402,47 @@ Each page: imports, Helmet, export default. No markdown.`;
 }
 
 extractCleanJSON(text) {
-    text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
-    text = text
-      .replace(/<\|[^|]*\|>/g, '')
-      .replace(/\|begin_of_sentence\|/gi, '')
-      .replace(/\|end_of_turn\|/gi, '')
-      .replace(/\|eot_id\|/gi, '');
-    
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    
-    if (start === -1 || end === -1 || end <= start) return null;
-    
-    let json = text.substring(start, end + 1);
-    json = json.replace(/,(\s*[}\]])/g, '$1').replace(/\n/g, ' ').replace(/\s+/g, ' ');
-    
-    try {
-      JSON.parse(json);
-      return json;
-    } catch (e) {
-      const match = e.message.match(/position (\d+)/);
-      if (match) {
-        const pos = parseInt(match[1]);
-        const lastBrace = json.lastIndexOf('}', pos);
-        if (lastBrace > 0) return json.substring(0, lastBrace + 1);
+  // Remove markdown
+  text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
+  
+  // Remove artifacts
+  text = text
+    .replace(/<\|[^|]*\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|eot_id\|/gi, '');
+  
+  // Find JSON boundaries
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  
+  if (start === -1 || end === -1 || end <= start) return null;
+  
+  let json = text.substring(start, end + 1);
+  
+  // Fix common issues
+  json = json
+    .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ');
+  
+  // Try to parse
+  try {
+    JSON.parse(json);
+    return json;
+  } catch (e) {
+    // If error, try to truncate at error position
+    const match = e.message.match(/position (\d+)/);
+    if (match) {
+      const pos = parseInt(match[1]);
+      const lastBrace = json.lastIndexOf('}', pos);
+      if (lastBrace > 0) {
+        return json.substring(0, lastBrace + 1);
       }
-      return null;
     }
+    return null;
   }
+}
 
 // NEW METHOD: Template service (no AI)
 getTemplateService(serviceConfig) {
@@ -729,39 +742,42 @@ export default ${pageConfig.name};
 // Replace aggressiveClean in frontendAgentUltra.js, backendAgentUltra.js:
 
 aggressiveClean(code) {
-    if (!code || typeof code !== 'string') return '';
-    
-    let cleaned = code
-      .replace(/```[\w]*\n?/g, '')
-      .replace(/```\s*$/g, '')
-      .replace(/<\|[^|]*\|>/g, '')
-      .replace(/\|begin_of_sentence\|/gi, '')
-      .replace(/\|end_of_turn\|/gi, '')
-      .replace(/\|start_header_id\|/gi, '')
-      .replace(/\|end_header_id\|/gi, '')
-      .replace(/\|eot_id\|/gi, '')
-      .replace(/\|assistant\|/gi, '')
-      .replace(/\|user\|/gi, '')
-      .replace(/[│▁▂▃▄▅▆▇█]/g, '')
-      .replace(/[\u2500-\u257F]/g, '')
-      .replace(/[\u2580-\u259F]/g, '')
-      .replace(/^\uFEFF/, '')
-      .replace(/[\u200B-\u200D\uFEFF]/g, '')
-      .replace(/\n{4,}/g, '\n\n\n');
-    
-    const hasValidStart = /^(import|const|function|class|\/\/|\/\*|\s*$)/.test(cleaned.trim());
-    const hasCode = /\w+/.test(cleaned);
-    const hasBraces = cleaned.includes('{') || cleaned.includes('(');
-    
-    if (!hasValidStart || !hasCode || !hasBraces) return '';
-    
-    const contaminated = ['│', '▁', '<|', '|>', '|begin', '|end', '|eot', '|assistant'];
-    for (const marker of contaminated) {
-      if (cleaned.includes(marker)) return '';
-    }
-    
-    return cleaned.trim();
+  if (!code || typeof code !== 'string') return '';
+  
+  // Remove ALL artifacts
+  let cleaned = code
+    .replace(/```[\w]*\n?/g, '')
+    .replace(/```\s*$/g, '')
+    .replace(/<\|[^|]*\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|start_header_id\|/gi, '')
+    .replace(/\|end_header_id\|/gi, '')
+    .replace(/\|eot_id\|/gi, '')
+    .replace(/\|assistant\|/gi, '')
+    .replace(/\|user\|/gi, '')
+    .replace(/[│▁▂▃▄▅▆▇█]/g, '')
+    .replace(/[\u2500-\u257F]/g, '')
+    .replace(/[\u2580-\u259F]/g, '')
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\n{4,}/g, '\n\n\n');
+  
+  // Validate it's real code
+  const hasValidStart = /^(import|const|function|class|\/\/|\/\*|\s*$)/.test(cleaned.trim());
+  const hasCode = /\w+/.test(cleaned);
+  const hasBraces = cleaned.includes('{') || cleaned.includes('(');
+  
+  if (!hasValidStart || !hasCode || !hasBraces) return '';
+  
+  // Final contamination check
+  const contaminated = ['│', '▁', '<|', '|>', '|begin', '|end', '|eot', '|assistant'];
+  for (const marker of contaminated) {
+    if (cleaned.includes(marker)) return '';
   }
+  
+  return cleaned.trim();
+}
 
 // === NEW: Post-generation validation ===
 validateGeneratedCode(code, filepath) {

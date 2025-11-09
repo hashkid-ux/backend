@@ -232,39 +232,47 @@ Return this JSON structure:
   }
 
   extractCleanJSON(text) {
-    // Remove markdown
-    text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
-    
-    // Find boundaries
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    
-    if (start === -1 || end === -1) return null;
-    
-    let json = text.substring(start, end + 1);
-    
-    // Fix common issues
-    json = json.replace(/,(\s*[}\]])/g, '$1');
-    json = json.replace(/\\/g, '\\\\');
-    json = json.replace(/\n/g, ' ');
-    
-    // Test parse
-    try {
-      JSON.parse(json);
-      return json;
-    } catch (e) {
-      const match = e.message.match(/position (\d+)/);
-      if (match) {
-        const pos = parseInt(match[1]);
-        const truncated = json.substring(0, pos);
-        const lastComplete = truncated.lastIndexOf('}');
-        if (lastComplete > 0) {
-          return json.substring(0, lastComplete + 1);
-        }
+  // Remove markdown
+  text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
+  
+  // Remove artifacts
+  text = text
+    .replace(/<\|[^|]*\|>/g, '')
+    .replace(/\|begin_of_sentence\|/gi, '')
+    .replace(/\|end_of_turn\|/gi, '')
+    .replace(/\|eot_id\|/gi, '');
+  
+  // Find JSON boundaries
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  
+  if (start === -1 || end === -1 || end <= start) return null;
+  
+  let json = text.substring(start, end + 1);
+  
+  // Fix common issues
+  json = json
+    .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ');
+  
+  // Try to parse
+  try {
+    JSON.parse(json);
+    return json;
+  } catch (e) {
+    // If error, try to truncate at error position
+    const match = e.message.match(/position (\d+)/);
+    if (match) {
+      const pos = parseInt(match[1]);
+      const lastBrace = json.lastIndexOf('}', pos);
+      if (lastBrace > 0) {
+        return json.substring(0, lastBrace + 1);
       }
-      return null;
     }
+    return null;
   }
+}
 
   async designEmotionalJourney(market, trends, dateContext) {
     console.log('   💭 Designing emotional journey...');
@@ -639,4 +647,5 @@ Start building free today. (CTA)"`
 }
 
 // FIXED: Changed from ESM to CommonJS
-module.exports = PsychologyAgentUltra;
+module.exports = { default: PsychologyAgentUltra };
+exports.PsychologyAgentUltra = PsychologyAgentUltra;
