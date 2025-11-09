@@ -152,83 +152,83 @@ class PsychologyAgentUltra {
     ];
   }
 
-  async createPersuasionArchitecture(triggers, competitors) {
-    console.log('   🏗️ Creating persuasion architecture...');
+async createPersuasionArchitecture(triggers, competitors) {
+  console.log('   🏗️ Creating persuasion architecture...');
 
-    const jsonInstructions = `CRITICAL JSON RULES:
-1. Return ONLY valid JSON
-2. No markdown code blocks
-3. No explanations before or after JSON
-4. Start response with {
-5. End response with }
-6. No trailing commas
-7. Escape all quotes in strings
-8. Maximum response length: 4000 tokens
+  // FIX: Simplify triggers to avoid escaping issues
+  const simplifiedTriggers = triggers.map(t => ({
+    trigger: t.trigger,
+    principle: t.principle,
+    priority: t.priority || 'medium'
+  }));
 
-`;
+  const jsonInstructions = `Return ONLY valid JSON. No markdown, no explanations.`;
 
-    const prompt = jsonInstructions +`Design a PERSUASION ARCHITECTURE using these psychological triggers:
+  const prompt = `${jsonInstructions}
 
-TRIGGERS: ${JSON.stringify(triggers.slice(0, 10), null, 2)}
+Design a persuasion map for an e-commerce marketplace.
 
-COMPETITORS: ${JSON.stringify(competitors?.individual_analyses?.slice(0, 3), null, 2)}
+TRIGGERS:
+${simplifiedTriggers.map(t => `- ${t.trigger}: ${t.principle}`).join('\n')}
 
-Create a detailed persuasion map in JSON:
+COMPETITORS: ${competitors?.individual_analyses?.length || 0} analyzed
+
+Return this JSON structure:
 {
   "awareness_stage": {
-    "psychology": "What psychological principles to use",
-    "triggers": ["trigger1", "trigger2"],
-    "messaging": "Core message for awareness",
-    "examples": ["Example copy 1", "Example copy 2"]
+    "psychology": "Curiosity and social proof",
+    "triggers": ["Social Proof", "Reciprocity"],
+    "messaging": "Join thousands of artisans",
+    "examples": ["Discover unique handmade items", "Shop local, support global"]
   },
   "consideration_stage": {
-    "psychology": "Principles for consideration",
-    "triggers": ["trigger1"],
-    "messaging": "Why choose us message",
-    "examples": ["Example copy"]
+    "psychology": "Trust and value",
+    "triggers": ["Social Proof"],
+    "messaging": "Quality you can trust",
+    "examples": ["Rated 4.8 by 10000 buyers"]
   },
   "decision_stage": {
-    "psychology": "Principles to close the deal",
-    "triggers": ["trigger1"],
-    "messaging": "Final push message",
-    "examples": ["Example copy"]
+    "psychology": "Urgency and security",
+    "triggers": ["Scarcity"],
+    "messaging": "Limited availability",
+    "examples": ["Only 3 left in stock", "Free returns"]
   },
   "retention_stage": {
-    "psychology": "Keep them engaged",
-    "triggers": ["trigger1"],
-    "messaging": "Continued value message",
-    "examples": ["Example copy"]
+    "psychology": "Satisfaction",
+    "triggers": ["Consistency"],
+    "messaging": "Track your favorites",
+    "examples": ["Your orders", "Saved items"]
   },
   "advocacy_stage": {
-    "psychology": "Turn them into promoters",
-    "triggers": ["trigger1"],
-    "messaging": "Share and refer message",
-    "examples": ["Example copy"]
+    "psychology": "Community",
+    "triggers": ["Liking"],
+    "messaging": "Share your finds",
+    "examples": ["Invite friends", "Leave review"]
   }
 }`;
 
-    try {
-      const response = await this.client.create({
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 4000,
-        temperature: 0.1
-      });
+  try {
+    const response = await this.client.create({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2000, // Reduced from 4000
+      temperature: 0.1
+    });
 
-      const content = response.content[0].text;
-      
-      // ← ADD: Robust extraction
+    const content = response.content[0].text;
     const cleaned = this.extractCleanJSON(content);
+    
     if (!cleaned) {
+      console.warn('⚠️ Using fallback persuasion map');
       return this.getDefaultPersuasionMap();
     }
     
     return JSON.parse(cleaned);
 
-    } catch (error) {
-      console.error('   ❌ Persuasion architecture error:', error);
-      return this.getDefaultPersuasionMap();
-    }
+  } catch (error) {
+    console.error('   ❌ Persuasion architecture error:', error.message);
+    return this.getDefaultPersuasionMap();
   }
+}
 
   // ← ADD NEW METHOD:
 extractCleanJSON(text) {
