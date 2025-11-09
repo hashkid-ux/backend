@@ -7,8 +7,8 @@ const aiClient = require('../../services/aiClient');
 class DesignAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.visionModel = 'meta-llama/llama-4-maverick:free'; // Image analysis
-    this.strategyModel = 'openai/chatgpt-4o-latest'; // Design strategy
+    this.visionModel = 'google/gemini-2.0-flash-exp:free'; // Image analysis
+    this.strategyModel = 'deepseek/deepseek-r1-0528-qwen3-8b:free'; // Design strategy
     this.client = new aiClient();
   }
 
