@@ -13,6 +13,8 @@ const BackendAgentUltra = require('./codegen/backendAgentUltra');
 const DatabaseAgentUltra = require('./codegen/databaseAgentUltra');
 const QAAgentUltra = require('./testing/qaAgentUltra');
 
+
+
 class MasterOrchestrator {
   constructor(tier = 'free', projectId = null, userId = null) {
     this.tier = tier;
@@ -25,7 +27,7 @@ class MasterOrchestrator {
     this.currentDate = new Date();
     
     // CONSERVATIVE: No parallel executor - sequential with proper delays
-    this.maxRetries = 2;
+    this.maxRetries = 1;
     this.phaseDelay = 8000; // 8s between phases (increased from 5s)
     this.taskDelay = 5000;  // 5s between tasks (increased from 3s)
     
@@ -35,6 +37,8 @@ class MasterOrchestrator {
       strategy: 'Sequential with proper delays and error recovery'
     });
   }
+
+  
 
   getCapabilities() {
     return {
@@ -247,6 +251,8 @@ class MasterOrchestrator {
       await this.sleep(this.phaseDelay);
     }*/
 
+    results.researchPapers = null;
+
     // Step 6: Strategic Analysis
     console.log('🎯 Step 1.6: Strategic Analysis...');
     results.starvingMarket = await this.detectStarvingMarketUltra(
@@ -406,6 +412,8 @@ class MasterOrchestrator {
       console.log(`✅ Schema: ${database.stats?.total_tables || 0} tables, ${database.stats?.total_indexes || 0} indexes`);
       await this.sleep(this.phaseDelay);
 
+      await this.sleep(3000); // ← ADD
+
       // Step 2: Backend Generation
       console.log('⚙️ Step 3.2: Backend Generation...');
       const backend = await this.safeRetry(async () => {
@@ -416,6 +424,8 @@ class MasterOrchestrator {
       
       console.log(`✅ Backend: ${backend.stats?.total_files || 0} files, ${backend.stats?.total_lines || 0} lines`);
       await this.sleep(this.phaseDelay);
+
+      await this.sleep(3000); // ← ADD
 
       // Step 3: Frontend Generation
       console.log('⚛️ Step 3.3: Frontend Generation...');

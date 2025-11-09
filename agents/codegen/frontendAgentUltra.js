@@ -7,8 +7,8 @@ class FrontendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.client = new aiClient();
-    this.model = 'qwen/qwen3-235b-a22b:free';
-    this.maxRetries = 3;
+    this.model = 'qwen/qwen3-coder:free';
+    this.maxRetries = 1;
   }
 
   async generateAppUltra(projectData) {
@@ -296,6 +296,15 @@ async generateDynamicFiles(projectData, architecture) {
 
   // PAGES - Try AI first, fallback to template
   const pages = architecture.fileStructure.pages || [];
+
+   // ADD THESE CORE FILES IMMEDIATELY:
+  files['src/App.js'] = this.getFallbackApp(projectData, architecture);
+  files['src/index.js'] = this.generateReactIndex(projectData);
+  files['package.json'] = this.generatePackageJson(projectData);
+  files['public/index.html'] = this.generateIndexHtml(projectData);
+  files['src/index.css'] = this.generateTailwindCSS();
+  files['tailwind.config.js'] = this.generateTailwindConfig();
+  files['README.md'] = this.generateREADME(projectData);
   
   for (const page of pages) {
     try {

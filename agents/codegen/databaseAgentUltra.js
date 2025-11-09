@@ -8,7 +8,7 @@ class DatabaseAgentUltra {
     this.tier = tier;
     this.client = new aiClient();
     this.model = 'qwen/qwen3-coder:free';
-    this.maxRetries = 3;
+    this.maxRetries = 1;
   }
 
   async designSchemaUltra(enhancedRequirements, researchData) {

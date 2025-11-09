@@ -649,7 +649,7 @@ CRITICAL: Return ONLY valid JSON, no markdown.`;
     try {
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: 6000,
+        max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }]
       });
 

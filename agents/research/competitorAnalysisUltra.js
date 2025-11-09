@@ -188,7 +188,7 @@ BE SPECIFIC. USE EVIDENCE. NO GENERIC ANSWERS.`;
     try {
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: this.tier === 'premium' ? 6000 : 3000,
+        max_tokens: this.tier === 'premium' ? 4000 : 3000,
         messages: [{ role: 'user', content: prompt }]
       });
 

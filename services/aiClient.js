@@ -33,7 +33,7 @@ class KeyRotationManager {
 
     const now = Date.now();
     const available = this.keyStats.filter(k => 
-      !k.isBlocked && (!k.lastUsed || now - k.lastUsed > 1000)
+      !k.isBlocked && (!k.lastUsed || now - k.lastUsed > 5000)
     );
 
     if (available.length === 0) {

@@ -163,6 +163,7 @@ class PsychologyAgentUltra {
       priority: t.priority || 'medium'
     }));
 
+
     const jsonInstructions = `Return ONLY valid JSON. No markdown, no explanations.`;
 
     const prompt = `${jsonInstructions}
@@ -170,7 +171,9 @@ class PsychologyAgentUltra {
 Design a persuasion map for an e-commerce marketplace.
 
 TRIGGERS:
-${simplifiedTriggers.map(t => `- ${t.trigger}: ${t.principle}`).join('\n')}
+${simplifiedTriggers.map(t => 
+  `- ${t.trigger}: ${t.principle.replace(/"/g, "'")}`
+).join('\n')}
 
 COMPETITORS: ${competitors?.individual_analyses?.length || 0} analyzed
 

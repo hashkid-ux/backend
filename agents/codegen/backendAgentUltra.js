@@ -8,7 +8,7 @@ class BackendAgentUltra {
     this.tier = tier;
     this.client = new aiClient();
     this.model = 'qwen/qwen3-coder:free';
-    this.maxRetries = 3;
+    this.maxRetries = 1;
   }
 
   async generateBackendUltra(projectData, databaseSchema) {
@@ -207,11 +207,17 @@ Return ONLY this JSON:
 }`;
 
     try {
-      const response = await this.client.messages.create({
+      const response = await Promise.race([
+  this.client.messages.create({
         model: this.model,
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }]
-      });
+      }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
+
 
       const content = response.content[0].text;
       const jsonStr = this.extractCleanJSON(content);
@@ -436,11 +442,17 @@ Generate complete server.js with:
 
 Return ONLY the complete JavaScript code, no markdown.`;
 
-    const response = await this.client.messages.create({
+    const response = await Promise.race([
+  this.client.messages.create({
       model: this.model,
       max_tokens: 3000,
       messages: [{ role: 'user', content: prompt }]
-    });
+    }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
+
 
     let code = response.content[0].text;
     code = code.replace(/```(?:javascript|js)?\n?/g, '').replace(/```\n?$/g, '');
@@ -497,11 +509,18 @@ CRITICAL RULES:
 Generate complete route.`;
     }
 
-    const response = await this.client.messages.create({
+
+    const response = await Promise.race([
+  this.client.messages.create({
       model: this.model,
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
-    });
+    }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
+
 
     let code = response.content[0].text;
     code = this.aggressiveClean(code);
@@ -533,11 +552,18 @@ CRITICAL RULES:
 Generate the complete component now.`;
 
 
-    const response = await this.client.messages.create({
+
+    const response = await Promise.race([
+  this.client.messages.create({
       model: this.model,
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
-    });
+    }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
+
 
     let code = response.content[0].text;
     
@@ -897,11 +923,16 @@ CRITICAL RULES:
 Generate the complete component now.`;
 
 
-    const response = await this.client.messages.create({
+    const response = await Promise.race([
+  this.client.messages.create({
       model: this.model,
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
-    });
+    }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
 
     let code = response.content[0].text;
     
@@ -1120,11 +1151,18 @@ Return JSON with fixed files:
 Return ONLY valid JSON.`;
 
     try {
-      const response = await this.client.messages.create({
+
+      const response = await Promise.race([
+  this.client.messages.create({
         model: this.model,
         max_tokens: 6000,
         messages: [{ role: 'user', content: prompt }]
-      });
+      }),
+  new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('timeout')), 30000)
+  )
+]);
+
 
       const content = response.content[0].text;
       const jsonMatch = content.match(/\{[\s\S]*\}/);

@@ -11,7 +11,7 @@ class MarketIntelligenceAgentUltra {
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.scraper = new WebScraperUltra();
     this.maxCompetitors = tier === 'free' ? 5 : tier === 'starter' ? 10 : 20;
-    this.maxRetries = 3;
+    this.maxRetries = 1;
   }
 
   async analyzeUltra(ideaDescription, targetCountry = 'Global', dateContext) {
@@ -181,7 +181,7 @@ Return this EXACT JSON structure:
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: this.tier === 'premium' ? 6000 : 3000,
+      max_tokens: this.tier === 'premium' ? 4000 : 3000,
       temperature: 0.3, // Lower for more consistent JSON
       messages: [{ role: 'user', content: prompt }]
     });

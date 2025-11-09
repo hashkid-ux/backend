@@ -15,7 +15,7 @@ class WebScraperUltra {
     this.browser = null;
     this.browserReady = false;
     this.browserDisabled = process.env.DISABLE_BROWSER === 'true'; // Environment override
-    this.maxRetries = 2;
+    this.maxRetries = 1;
     this.browserAttempts = 0;
     this.maxBrowserAttempts = 2;
     

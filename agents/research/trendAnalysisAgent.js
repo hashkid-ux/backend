@@ -9,7 +9,7 @@ class TrendAnalysisAgent {
     this.tier = tier;
     this.client = new aiClient();
     this.model = 'google/gemini-2.0-flash-exp:free';
-    this.maxRetries = 3;
+    this.maxRetries = 1;
   }
 
   async analyzeTrends(projectDescription, dateContext) {
