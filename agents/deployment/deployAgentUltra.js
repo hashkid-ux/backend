@@ -2,14 +2,14 @@
 // ULTRA Deploy Agent - Intelligent Deployment with Post-Deploy Monitoring
 
 const axios = require('axios');
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const PostDeploymentMonitor = require('../monitoring/postDeploymentMonitor');
 
 class DeployAgentUltra {
   constructor(tier = 'free', projectId = null) {
     this.tier = tier;
     this.projectId = projectId;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'qwen/qwen-2.5-coder-32b-instruct:free';
   }
 

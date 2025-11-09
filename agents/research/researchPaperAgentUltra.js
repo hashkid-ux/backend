@@ -1,14 +1,14 @@
 // agents/research/researchPaperAgentUltra.js
 // ULTRA Research Paper Agent - Deep Academic Intelligence
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const axios = require('axios');
 const WebScraperUltra = require('./webScraperUltra');
 
 class ResearchPaperAgentUltra {
   constructor(tier = 'premium') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'qwen/qwen3-235b-a22b:free';
     this.scraper = new WebScraperUltra();
   }

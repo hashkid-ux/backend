@@ -1,7 +1,7 @@
 // backend/agents/monitoring/postDeploymentMonitor.js
 // ULTRA Post-Deployment Monitoring - Track Competitors, Trends, Performance
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const WebScraperUltra = require('../research/webScraperUltra');
 const axios = require('axios');
 
@@ -9,7 +9,7 @@ class PostDeploymentMonitor {
   constructor(tier = 'free', projectId = null) {
     this.tier = tier;
     this.projectId = projectId;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'deepseek/deepseek-r1-0528-qwen3-8b:free';
     this.scraper = new WebScraperUltra();
     this.monitoringSchedule = this.getMonitoringSchedule(tier);

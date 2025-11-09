@@ -1,24 +1,24 @@
 // agents/masterOrchestratorUltra.js
 // 🚀 BULLETPROOF ORCHESTRATOR - Better Phase Coordination, Error Recovery
 
-const AIClient = require('../services/aiClient');
-const MarketIntelligenceAgentUltra = require('./research/marketIntelligenceUltra');
-const CompetitorAnalysisAgentUltra = require('./research/competitorAnalysisUltra');
-const ReviewAnalysisAgentUltra = require('./research/reviewAnalysisUltra');
-const ResearchPaperAgentUltra = require('./research/researchPaperAgentUltra');
-const TrendAnalysisAgent = require('./research/trendAnalysisAgent');
-const PsychologyAgentUltra = require('./strategy/psychologyAgentUltra');
-const FrontendAgentUltra = require('./codegen/frontendAgentUltra');
-const BackendAgentUltra = require('./codegen/backendAgentUltra');
-const DatabaseAgentUltra = require('./codegen/databaseAgentUltra');
-const QAAgentUltra = require('./testing/qaAgentUltra');
+import aiClient from '../services/aiClient';
+import MarketIntelligenceAgentUltra from './research/marketIntelligenceUltra';
+import CompetitorAnalysisAgentUltra from './research/competitorAnalysisUltra';
+import ReviewAnalysisAgentUltra from './research/reviewAnalysisUltra';
+import ResearchPaperAgentUltra from './research/researchPaperAgentUltra';
+import TrendAnalysisAgent from './research/trendAnalysisAgent';
+import PsychologyAgentUltra from './strategy/psychologyAgentUltra';
+import FrontendAgentUltra from './codegen/frontendAgentUltra';
+import BackendAgentUltra from './codegen/backendAgentUltra';
+import DatabaseAgentUltra from './codegen/databaseAgentUltra';
+import QAAgentUltra from './testing/qaAgentUltra';
 
 class MasterOrchestrator {
   constructor(tier = 'free', projectId = null, userId = null) {
     this.tier = tier;
     this.projectId = projectId;
     this.userId = userId;
-    this.client = new AIClient();
+    this.client = new aiClient();
     this.researchData = {};
     this.competitiveAdvantages = [];
     this.startTime = Date.now();
@@ -744,4 +744,4 @@ class MasterOrchestrator {
   }
 }
 
-module.exports = MasterOrchestrator;
+export default MasterOrchestrator;

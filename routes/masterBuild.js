@@ -3,7 +3,7 @@
 
 const express = require('express');
 const router = express.Router();
-const MasterOrchestrator = require('../agents/masterOrchestratorUltra');
+const MasterOrchestrator = require('../agents/masterOrchestratorUltra').default;
 const { UserService, ProjectService, NotificationService } = require('../services/database');
 const { authenticateToken } = require('./authWithDb');
 const archiver = require('archiver');
@@ -11,16 +11,14 @@ const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 
-// Batch DB updates to avoid N+1
 const dbUpdateQueue = new Map();
-const DB_BATCH_INTERVAL = 5000; // Update DB every 5s instead of every call
+const DB_BATCH_INTERVAL = 5000;
 
 function queueDBUpdate(projectId, updates) {
   const existing = dbUpdateQueue.get(projectId) || {};
   dbUpdateQueue.set(projectId, { ...existing, ...updates });
 }
 
-// Flush queue every 5 seconds
 setInterval(async () => {
   if (dbUpdateQueue.size === 0) return;
   
@@ -29,12 +27,10 @@ setInterval(async () => {
   
   await Promise.allSettled(
     updates.map(([projectId, data]) => 
-      ProjectService.update(projectId, data)
-        .catch(err => console.error(`DB update failed for ${projectId}:`, err))
+      ProjectService.update(projectId, data).catch(() => {})
     )
   );
 }, DB_BATCH_INTERVAL);
-
 
 // ==========================================
 // HELPER FUNCTIONS
@@ -179,7 +175,6 @@ function updateBuildProgress(buildId, updates) {
 
   activeBuilds.set(buildId, updated);
 
-  // Cache files
   if (Object.keys(updatedFiles).length > 0) {
     buildFilesCache.set(buildId, {
       files: updatedFiles,
@@ -188,13 +183,9 @@ function updateBuildProgress(buildId, updates) {
     });
   }
 
-  // Store logs
-  if (!buildLogs.has(buildId)) {
-    buildLogs.set(buildId, []);
-  }
+  if (!buildLogs.has(buildId)) buildLogs.set(buildId, []);
   buildLogs.get(buildId).push(log);
 
-  // CRITICAL FIX: Queue DB update instead of immediate write
   if (current.project_id) {
     queueDBUpdate(current.project_id, {
       buildProgress: updated.progress,

@@ -2,14 +2,14 @@
 // 🎨 DESIGN AGENT ULTRA - Visual Intelligence with Llama 4 Maverick
 // Analyzes competitor screenshots → Creates complete design system
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 
 class DesignAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
     this.visionModel = 'meta-llama/llama-4-maverick:free'; // Image analysis
     this.strategyModel = 'openai/chatgpt-4o-latest'; // Design strategy
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
   }
 
   async analyzeCompetitorDesigns(screenshots, projectData) {

@@ -1,12 +1,12 @@
 // backend/agents/strategy/psychologyAgentUltra.js
 // ULTRA Psychology Agent - Advanced Persuasion & Behavioral Science
 
-const AIClient = require('../../services/aiClient');
+import aiClient from '../../services/aiClient';
 
 class PsychologyAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 
@@ -687,4 +687,4 @@ Start building free today. (CTA)"`
   }
 }
 
-module.exports = PsychologyAgentUltra;
+export default PsychologyAgentUltra;

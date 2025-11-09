@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const AIClient = require('../services/aiClient');
+const aiClient = require('../services/aiClient');
 const { authenticateToken } = require('./authWithDb');
 
 router.post('/repair-code', authenticateToken, async (req, res) => {
@@ -13,7 +13,7 @@ router.post('/repair-code', authenticateToken, async (req, res) => {
     
     console.log('🔧 AI code repair requested');
     
-    const client = new AIClient();
+    const client = new aiClient();
     
     const prompt = `Fix this ${language} code. Syntax errors detected:
 ${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}

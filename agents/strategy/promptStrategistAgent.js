@@ -1,12 +1,12 @@
 // agents/strategy/promptStrategistAgent.js
 // Strategic Prompt Agent - Converts research chaos into clean build directives
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 
 class PromptStrategistAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'deepseek/deepseek-chat-v3.1:free';
   }
 

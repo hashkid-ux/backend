@@ -1,90 +1,99 @@
-// services/aiClient.js - REPLACE ENTIRE FILE
-
 const Anthropic = require('@anthropic-ai/sdk');
 
-class AIClient {
-  constructor(apiKey) {
-    this.client = new Anthropic({ apiKey });
-    
-    // Circuit breaker state
+class aiClient {
+  constructor(apiKey = process.env.OPENROUTER_API_KEY) {
+    if (!apiKey) {
+      throw new Error('CRITICAL: OPENROUTER_API_KEY missing');
+    }
+
+    try {
+      this.client = new Anthropic({ 
+        apiKey,
+        baseURL: 'https://openrouter.ai/api/v1'
+      });
+      this.initialized = true;
+    } catch (error) {
+      console.error('❌ Anthropic init failed:', error);
+      this.initialized = false;
+      throw error;
+    }
+
     this.failedAttempts = 0;
     this.maxFailures = 5;
     this.circuitOpen = false;
     this.lastFailureTime = null;
-    this.circuitResetTime = 5 * 60 * 1000; // 5 minutes
+    this.circuitResetTime = 300000; // 5 min
   }
 
   async create(params) {
-    // Check circuit breaker
+    if (!this.initialized || !this.client?.messages) {
+      throw new Error('AI Client not initialized');
+    }
+
     if (this.circuitOpen) {
       const now = Date.now();
       if (now - this.lastFailureTime > this.circuitResetTime) {
-        console.log('🔄 Circuit breaker reset - trying again');
         this.circuitOpen = false;
         this.failedAttempts = 0;
       } else {
-        const waitMinutes = Math.ceil((this.circuitResetTime - (now - this.lastFailureTime)) / 60000);
-        throw new Error(`Circuit breaker open - wait ${waitMinutes} minutes before retry`);
+        const waitMin = Math.ceil((this.circuitResetTime - (now - this.lastFailureTime)) / 60000);
+        throw new Error(`Circuit breaker open - retry in ${waitMin}min`);
       }
     }
 
     let attempt = 0;
     const maxAttempts = 3;
-    
+
     while (attempt < maxAttempts) {
       try {
         attempt++;
         
-        // CRITICAL: Add request timeout
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
-        
+        const timeout = setTimeout(() => controller.abort(), 60000);
+
         const response = await this.client.messages.create({
           ...params,
           signal: controller.signal
         });
-        
+
         clearTimeout(timeout);
-        
-        // Success - reset failure counter
         this.failedAttempts = 0;
         return response;
-        
+
       } catch (error) {
-        const is429 = error.status === 429 || error.message?.includes('429') || error.message?.includes('rate limit');
+        clearTimeout(timeout);
         
+        const is429 = error.status === 429 || error.message?.includes('rate limit');
+
         if (is429) {
           this.failedAttempts++;
-          
-          // Open circuit if too many failures
+
           if (this.failedAttempts >= this.maxFailures) {
             this.circuitOpen = true;
             this.lastFailureTime = Date.now();
-            console.error('🚫 CIRCUIT BREAKER OPEN - Too many rate limits');
-            throw new Error('API rate limit exceeded - circuit breaker activated');
+            throw new Error('Circuit breaker: Too many rate limits');
           }
-          
-          // Exponential backoff: 30s, 90s, 180s
-          const backoffSeconds = 30 * Math.pow(3, attempt - 1);
-          console.warn(`⏳ Rate limit (attempt ${attempt}/${maxAttempts}) - waiting ${backoffSeconds}s`);
+
+          const backoff = 30 * Math.pow(3, attempt - 1);
           
           if (attempt < maxAttempts) {
-            await this.sleep(backoffSeconds * 1000);
+            await new Promise(r => setTimeout(r, backoff * 1000));
             continue;
           }
         }
-        
-        // Non-429 error or max attempts reached
+
         throw error;
       }
     }
-    
-    throw new Error('Max retry attempts reached');
+
+    throw new Error('Max retries exceeded');
   }
 
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  get messages() {
+    return {
+      create: this.create.bind(this)
+    };
   }
 }
 
-module.exports = AIClient;
+module.exports = aiClient;

@@ -1,14 +1,14 @@
 // agents/research/reviewAnalysisUltra.js
 // ULTRA Review Analysis - Deep sentiment + user pain points
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const Sentiment = require('sentiment');
 const WebScraperUltra = require('./webScraperUltra');
 
 class ReviewAnalysisAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.sentiment = new Sentiment();
     this.scraper = new WebScraperUltra();

@@ -49,20 +49,18 @@ class WebScraperUltra {
   // ==========================================
 
   async initBrowser() {
-
+    if (!this.browserUseCount) this.browserUseCount = 0;
+    
     if (this.browserUseCount > 10) {
-    console.log('🔄 Restarting browser to prevent memory leaks');
-    await this.closeBrowser();
-    this.browserUseCount = 0;
-  }
-
-
-    if (this.browserDisabled) {
-      return null;
+      console.log('🔄 Restarting browser (memory cleanup)');
+      await this.closeBrowser();
+      this.browserUseCount = 0;
     }
 
+    if (this.browserDisabled) return null;
+
     if (this.browserAttempts >= this.maxBrowserAttempts) {
-      console.log('🚫 Browser disabled after multiple failures');
+      console.log('🚫 Browser disabled after failures');
       this.browserDisabled = true;
       return null;
     }
@@ -72,14 +70,14 @@ class WebScraperUltra {
         await this.browser.contexts();
         return this.browser;
       } catch (error) {
-        console.warn('⚠️ Browser connection lost, reinitializing...');
+        console.warn('⚠️ Browser lost, reinitializing...');
         this.browser = null;
         this.browserReady = false;
       }
     }
 
     try {
-      console.log('🌐 Initializing browser (minimal mode)...');
+      console.log('🌐 Initializing browser...');
       this.browserAttempts++;
       
       this.browser = await chromium.launch({
@@ -92,27 +90,13 @@ class WebScraperUltra {
           '--disable-gpu',
           '--single-process',
           '--no-zygote',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--window-size=1280,720',
-          '--disable-background-networking',
-          '--disable-default-apps',
-          '--disable-extensions',
-          '--disable-sync',
-          '--disable-translate',
-          '--metrics-recording-only',
-          '--mute-audio',
-          '--no-first-run',
-          '--safebrowsing-disable-auto-update',
-          '--disable-client-side-phishing-detection',
-          '--disable-component-update',
-          '--disable-domain-reliability'
+          '--disable-web-security'
         ]
       });
       
       this.browserReady = true;
+      this.browserUseCount++;
       console.log('✅ Browser ready');
-      this.browserUseCount = (this.browserUseCount || 0) + 1;
       return this.browser;
       
     } catch (error) {
@@ -122,13 +106,13 @@ class WebScraperUltra {
       
       if (this.browserAttempts >= this.maxBrowserAttempts) {
         this.browserDisabled = true;
-        console.log('🚫 Browser permanently disabled');
       }
       
       return null;
     }
-
   }
+
+  
 
   async closeBrowser() {
     if (this.browser) {
@@ -248,103 +232,93 @@ class WebScraperUltra {
     };
   }
 
-  async scrapeWithBrowser(url, options) {
-  let context = null;
-  let page = null;
-  let timeoutId = null;
+async scrapeWithBrowser(url, options) {
+    let context = null;
+    let page = null;
+    let timeoutId = null;
 
-  try {
-    const browser = await this.initBrowser();
-    if (!browser) throw new Error('Browser unavailable');
+    try {
+      const browser = await this.initBrowser();
+      if (!browser) throw new Error('Browser unavailable');
 
-    context = await browser.newContext({
-      userAgent: this.getRandomUserAgent(),
-      viewport: { width: 1280, height: 720 },
-      ignoreHTTPSErrors: true,
-      bypassCSP: true,
-      serviceWorkers: 'block', // CRITICAL: Prevent memory leaks
-      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' }
-    });
+      context = await browser.newContext({
+        userAgent: this.getRandomUserAgent(),
+        viewport: { width: 1280, height: 720 },
+        ignoreHTTPSErrors: true,
+        bypassCSP: true,
+        serviceWorkers: 'block',
+        extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' }
+      });
 
-    page = await context.newPage();
-    
-    // CRITICAL: Force-close after 15s
-    timeoutId = setTimeout(async () => {
-      console.warn('⚠️ Force-closing page after timeout');
-      try {
-        if (page) await page.close({ runBeforeUnload: false });
-        if (context) await context.close();
-      } catch (e) {}
-    }, 15000);
+      page = await context.newPage();
+      
+      timeoutId = setTimeout(async () => {
+        console.warn('⚠️ Force-closing page after timeout');
+        try {
+          if (page) await page.close({ runBeforeUnload: false });
+          if (context) await context.close();
+        } catch (e) {}
+      }, 15000);
 
-    // Block heavy resources
-    await page.route('**/*', (route) => {
-      const type = route.request().resourceType();
-      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-        route.abort();
-      } else {
-        route.continue();
+      await page.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+          route.abort();
+        } else {
+          route.continue();
+        }
+      });
+
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 10000
+      });
+
+      await page.waitForTimeout(1500);
+      const html = await page.content();
+      const $ = cheerio.load(html);
+
+      clearTimeout(timeoutId);
+
+      const data = {
+        url,
+        title: this.extractTitle($),
+        metaDescription: this.extractMetaDescription($),
+        headings: this.extractHeadings($),
+        links: this.extractLinks($, url),
+        text: this.extractText($),
+        method: 'browser',
+        scrapedAt: new Date().toISOString(),
+        success: true
+      };
+
+      return data;
+
+    } catch (error) {
+      if (error.message.includes('Target') || error.message.includes('closed')) {
+        this.browserDisabled = true;
+        console.log('🚫 Browser crashed - permanently disabled');
       }
-    });
-
-    await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 10000
-    });
-
-    await page.waitForTimeout(1500);
-    const html = await page.content();
-    const $ = cheerio.load(html);
-
-    clearTimeout(timeoutId);
-
-    const data = {
-      url,
-      title: this.extractTitle($),
-      metaDescription: this.extractMetaDescription($),
-      headings: this.extractHeadings($),
-      links: this.extractLinks($, url),
-      text: this.extractText($),
-      method: 'browser',
-      scrapedAt: new Date().toISOString(),
-      success: true
-    };
-
-    return data;
-
-  } catch (error) {
-    if (error.message.includes('Target') || error.message.includes('closed')) {
-      this.browserDisabled = true;
-      console.log('🚫 Browser crashed - permanently disabled');
-    }
-    throw error;
-    
-  } finally {
-    // CRITICAL: Cleanup in reverse order with error handling
-    clearTimeout(timeoutId);
-    
-    if (page) {
-      try {
-        await page.close({ runBeforeUnload: false });
-      } catch (e) {
-        console.warn('Page close failed:', e.message);
+      throw error;
+      
+    } finally {
+      clearTimeout(timeoutId);
+      
+      if (page) {
+        try {
+          await page.close({ runBeforeUnload: false });
+        } catch (e) {}
       }
-    }
-    
-    if (context) {
-      try {
-        await context.close();
-      } catch (e) {
-        console.warn('Context close failed:', e.message);
+      
+      if (context) {
+        try {
+          await context.close();
+        } catch (e) {}
       }
-    }
-    
-    // Force garbage collection hint
-    if (global.gc) {
-      global.gc();
+      
+      if (global.gc) global.gc();
     }
   }
-}
 
   // ==========================================
   // SEARCH ENGINES - MULTI-STRATEGY

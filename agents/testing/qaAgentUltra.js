@@ -1,12 +1,12 @@
 // agents/testing/qaAgentUltra.js
 // ULTRA QA Agent - Self-Healing, Comprehensive Testing
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 
 class QAAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'qwen/qwen3-coder:free';
   }
 

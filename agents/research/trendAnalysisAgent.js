@@ -1,13 +1,13 @@
 // agents/research/trendAnalysisAgent.js
 // ULTRA Trend Analysis - PRODUCTION GRADE with Robust Error Handling
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const axios = require('axios');
 
 class TrendAnalysisAgent {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.maxRetries = 3;
   }

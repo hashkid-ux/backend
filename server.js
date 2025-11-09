@@ -58,6 +58,22 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+function validateEnvironment() {
+  const required = ['OPENROUTER_API_KEY', 'DATABASE_URL'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    console.error('❌ FATAL: Missing environment variables:');
+    missing.forEach(key => console.error(`  - ${key}`));
+    console.error('\nCreate .env file with these variables.');
+    process.exit(1);
+  }
+  
+  console.log('✅ Environment validated');
+}
+
+validateEnvironment();
+
 // ==========================================
 // RATE LIMITING
 // ==========================================

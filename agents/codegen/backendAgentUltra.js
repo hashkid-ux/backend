@@ -1,12 +1,12 @@
 // agents/codegen/backendAgentUltra.js
 // ULTRA Backend Agent - Self-Debugging, Production-Ready Node.js
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 
 class BackendAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'qwen/qwen3-coder:free';
     this.maxRetries = 3;
   }
@@ -89,80 +89,36 @@ class BackendAgentUltra {
       authentication
     } = projectData;
 
-    const jsonInstructions = `CRITICAL JSON RULES:
-1. Return ONLY valid JSON
-2. No markdown code blocks
-3. No explanations before or after JSON
-4. Start response with {
-5. End response with }
-6. No trailing commas
-7. Escape all quotes in strings
-8. Maximum response length: 4000 tokens
+    const jsonInstructions = `CRITICAL: Return ONLY valid JSON. Start with { end with }. No markdown, no explanations.
 
 `;
 
-    const prompt = jsonInstructions + `You are an expert Node.js architect. Plan a PRODUCTION-READY backend architecture.
+    const prompt = jsonInstructions + `Plan Node.js backend architecture.
 
 PROJECT: ${projectName}
 DESCRIPTION: ${description}
-FEATURES: ${JSON.stringify(features || [])}
-COMPETITIVE ADVANTAGES: ${JSON.stringify(competitive_advantages?.slice(0, 5) || [])}
-AUTHENTICATION NEEDED: ${authentication !== false}
-DATABASE TABLES: ${Object.keys(databaseSchema || {}).slice(0, 5).join(', ')}
+FEATURES: ${JSON.stringify(features || []).substring(0, 200)}
+AUTH: ${authentication !== false}
 
-Plan the OPTIMAL file structure. Return ONLY this JSON:
+Return ONLY this JSON:
 {
-  "totalFiles": 0,
+  "totalFiles": 12,
   "fileStructure": {
     "routes": [
-      {
-        "name": "health",
-        "path": "routes/health.js",
-        "purpose": "Health check endpoint",
-        "endpoints": ["/health"],
-        "priority": "critical"
-      }
+      {"name": "health", "path": "routes/health.js", "purpose": "Health check", "priority": "critical"}
     ],
     "controllers": [
-      {
-        "name": "authController",
-        "path": "controllers/authController.js",
-        "purpose": "Authentication logic",
-        "methods": ["register", "login", "logout"],
-        "priority": "critical"
-      }
+      {"name": "authController", "path": "controllers/authController.js", "purpose": "Auth logic", "methods": ["register", "login"], "priority": "critical"}
     ],
     "middleware": [
-      {
-        "name": "auth",
-        "path": "middleware/auth.js",
-        "purpose": "JWT authentication",
-        "priority": "critical"
-      }
+      {"name": "auth", "path": "middleware/auth.js", "purpose": "JWT middleware", "priority": "critical"}
     ],
-    "models": [
-      {
-        "name": "User",
-        "path": "models/User.js",
-        "purpose": "User model",
-        "priority": "high"
-      }
-    ],
+    "models": [],
     "utils": [
-      {
-        "name": "jwt",
-        "path": "utils/jwt.js",
-        "purpose": "JWT utilities",
-        "priority": "high"
-      }
+      {"name": "jwt", "path": "utils/jwt.js", "purpose": "JWT utilities", "priority": "high"}
     ],
     "config": [
-      {
-        "name": "database",
-        "path": "config/database.js",
-        "purpose": "Prisma config",
-        "priority": "critical"
-      }
+      {"name": "database", "path": "config/database.js", "purpose": "Prisma config", "priority": "critical"}
     ]
   },
   "techStack": {
@@ -171,18 +127,8 @@ Plan the OPTIMAL file structure. Return ONLY this JSON:
     "database": "PostgreSQL",
     "orm": "Prisma",
     "auth": "JWT"
-  },
-  "apiEndpoints": [
-    {
-      "path": "/api/health",
-      "method": "GET",
-      "purpose": "Health check"
-    }
-  ],
-  "securityFeatures": ["JWT", "bcrypt", "helmet", "cors", "rate-limiting"]
-}
-
-CRITICAL: Plan based on ACTUAL features needed. If simple project, fewer files.`;
+  }
+}`;
 
     try {
       const response = await this.client.messages.create({
@@ -192,23 +138,22 @@ CRITICAL: Plan based on ACTUAL features needed. If simple project, fewer files.`
       });
 
       const content = response.content[0].text;
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonStr = this.extractCleanJSON(content);
       
-      if (!jsonMatch) {
-        throw new Error('Failed to parse architecture plan');
+      if (!jsonStr) {
+        console.error('❌ JSON extraction failed, using default');
+        return this.getDefaultBackendArchitecture(projectData);
       }
 
-      const architecture = JSON.parse(jsonMatch[0]);
+      const architecture = JSON.parse(jsonStr);
       
-      // Calculate total files
       architecture.totalFiles = 
         (architecture.fileStructure.routes?.length || 0) +
         (architecture.fileStructure.controllers?.length || 0) +
         (architecture.fileStructure.middleware?.length || 0) +
         (architecture.fileStructure.models?.length || 0) +
         (architecture.fileStructure.utils?.length || 0) +
-        (architecture.fileStructure.config?.length || 0) +
-        3; // Core files (server.js, package.json, .env.example)
+        (architecture.fileStructure.config?.length || 0) + 3;
 
       return architecture;
     } catch (error) {
@@ -530,83 +475,79 @@ Generate the complete component now.`;
 // 🔥 NUCLEAR CODE CLEANER - Add to ALL agents
 
 // Replace aggressiveClean in frontendAgentUltra.js, backendAgentUltra.js:
-
-aggressiveClean(code) {
-  if (!code || typeof code !== 'string') return '';
-  
-  let cleaned = code;
-  
-  // === STEP 1: Remove ALL non-code artifacts ===
-  cleaned = cleaned
-    // Markdown blocks
-    .replace(/```[\w]*\n?/g, '')
-    .replace(/```\s*$/g, '')
+extractCleanJSON(text) {
+    text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
+    text = text
+      .replace(/<\|[^|]*\|>/g, '')
+      .replace(/\|begin_of_sentence\|/gi, '')
+      .replace(/\|end_of_turn\|/gi, '')
+      .replace(/\|eot_id\|/gi, '');
     
-    // Tokenization artifacts (CRITICAL)
-    .replace(/<\|[^|]*\|>/g, '')
-    .replace(/\|begin_of_sentence\|/gi, '')
-    .replace(/\|end_of_turn\|/gi, '')
-    .replace(/\|start_header_id\|/gi, '')
-    .replace(/\|end_header_id\|/gi, '')
-    .replace(/\|eot_id\|/gi, '')
-    .replace(/\|assistant\|/gi, '')
-    .replace(/\|user\|/gi, '')
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
     
-    // Unicode box drawing & special chars
-    .replace(/[│▁▂▃▄▅▆▇█]/g, '')
-    .replace(/[\u2500-\u257F]/g, '') // Box drawing
-    .replace(/[\u2580-\u259F]/g, '') // Block elements
+    if (start === -1 || end === -1 || end <= start) return null;
     
-    // BOM and invisible chars
-    .replace(/^\uFEFF/, '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    let json = text.substring(start, end + 1);
+    json = json
+      .replace(/,(\s*[}\]])/g, '$1')
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ');
     
-    // Multiple newlines
-    .replace(/\n{4,}/g, '\n\n\n');
-  
-  // === STEP 2: Validate structure ===
-  const hasValidStart = /^(import|const|function|class|\/\/|\/\*|\s*$)/.test(cleaned.trim());
-  const hasCode = /\w+/.test(cleaned);
-  const hasBraces = cleaned.includes('{') || cleaned.includes('(');
-  
-  if (!hasValidStart || !hasCode || !hasBraces) {
-    console.error('❌ Code validation failed - using fallback');
-    return ''; // Trigger fallback
-  }
-  
-  // === STEP 3: Check for contamination ===
-  const contaminated = [
-    '│', '▁', '<|', '|>', '|begin', '|end', '|eot', '|assistant'
-  ];
-  
-  for (const marker of contaminated) {
-    if (cleaned.includes(marker)) {
-      console.error(`❌ Contamination detected: ${marker}`);
-      return ''; // Trigger fallback
+    try {
+      JSON.parse(json);
+      return json;
+    } catch (e) {
+      const match = e.message.match(/position (\d+)/);
+      if (match) {
+        const pos = parseInt(match[1]);
+        const lastBrace = json.lastIndexOf('}', pos);
+        if (lastBrace > 0) {
+          return json.substring(0, lastBrace + 1);
+        }
+      }
+      return null;
     }
   }
-  
-  // === STEP 4: Fix common syntax issues ===
-  cleaned = cleaned
-    // Fix duplicate imports
-    .replace(/(import\s+\{[^}]+\}\s+from\s+['"][^'"]+['"];?\s*)+/g, (match) => {
-      const imports = [...new Set(match.split(/import\s+/).filter(Boolean))];
-      return imports.map(imp => `import ${imp}`).join('');
-    })
+
+aggressiveClean(code) {
+    if (!code || typeof code !== 'string') return '';
     
-    // Remove duplicate function definitions
-    .replace(/(function\s+(\w+)\s*\([^)]*\)\s*\{[\s\S]*?\})\s*\1/g, '$1')
+    let cleaned = code
+      .replace(/```[\w]*\n?/g, '')
+      .replace(/```\s*$/g, '')
+      .replace(/<\|[^|]*\|>/g, '')
+      .replace(/\|begin_of_sentence\|/gi, '')
+      .replace(/\|end_of_turn\|/gi, '')
+      .replace(/\|start_header_id\|/gi, '')
+      .replace(/\|end_header_id\|/gi, '')
+      .replace(/\|eot_id\|/gi, '')
+      .replace(/\|assistant\|/gi, '')
+      .replace(/\|user\|/gi, '')
+      .replace(/[│▁▂▃▄▅▆▇█]/g, '')
+      .replace(/[\u2500-\u257F]/g, '')
+      .replace(/[\u2580-\u259F]/g, '')
+      .replace(/^\uFEFF/, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\n{4,}/g, '\n\n\n');
     
-    // Fix broken JSX
-    .replace(/(<\/\w+>)\s*\)/g, '$1')
-    .replace(/\)\s*=>\s*\)/g, ') =>')
+    const hasValidStart = /^(import|const|function|class|\/\/|\/\*|\s*$)/.test(cleaned.trim());
+    const hasCode = /\w+/.test(cleaned);
+    const hasBraces = cleaned.includes('{') || cleaned.includes('(');
     
-    // Trim excessive whitespace
-    .replace(/[ \t]+$/gm, '')
-    .trim();
-  
-  return cleaned;
-}
+    if (!hasValidStart || !hasCode || !hasBraces) {
+      return '';
+    }
+    
+    const contaminated = ['│', '▁', '<|', '|>', '|begin', '|end', '|eot', '|assistant'];
+    for (const marker of contaminated) {
+      if (cleaned.includes(marker)) {
+        return '';
+      }
+    }
+    
+    return cleaned.trim();
+  }
 
 // === NEW: Pre-generation validation ===
 validateBeforeGeneration(config, type) {

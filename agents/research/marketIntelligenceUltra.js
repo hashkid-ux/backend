@@ -1,13 +1,13 @@
 // agents/research/marketIntelligenceUltra.js
 // BULLETPROOF Market Intelligence with Enhanced JSON Parsing
 
-const AIClient = require('../../services/aiClient');
+const aiClient = require('../../services/aiClient');
 const WebScraperUltra = require('./webScraperUltra');
 
 class MarketIntelligenceAgentUltra {
   constructor(tier = 'free') {
     this.tier = tier;
-    this.client = new AIClient(process.env.OPENROUTER_API_KEY);
+    this.client = new aiClient(process.env.OPENROUTER_API_KEY);
     this.model = 'google/gemini-2.0-flash-exp:free';
     this.scraper = new WebScraperUltra();
     this.maxCompetitors = tier === 'free' ? 5 : tier === 'starter' ? 10 : 20;
