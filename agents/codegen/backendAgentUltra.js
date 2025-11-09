@@ -763,33 +763,92 @@ quickSyntaxCheck(code, filepath) {
 }
 
 
+// backendAgentUltra.js - REPLACE aiRepairCode method
+
 async aiRepairCode(brokenCode, errors, filepath) {
-  const prompt = `Fix this JavaScript code...`;
-
-  const response = await this.client.messages.create({
-    model: this.model,
-    max_tokens: 3000,
-    temperature: 0.1,
-  });
-
-  let fixed = response.content[0].text.trim();
+  // CRITICAL: Detect JSON errors immediately
+  const hasJSONError = errors.some(e => 
+    e.toLowerCase().includes('json') || 
+    e.toLowerCase().includes('parse') ||
+    e.toLowerCase().includes('unexpected token')
+  );
   
-  // ADD THIS: Nuclear cleaning
-  fixed = fixed
-    .replace(/[｜▁]/g, '')  // Remove all tokenization chars
-    .replace(/<\|.*?\|>/g, '')  // Remove special tokens
-    .replace(/```[\w]*\n?/g, '')  // Remove markdown
-    .replace(/\|begin_of_sentence\|/gi, '')
-    .replace(/\|end_of_turn\|/gi, '')
-    .trim();
-  
-  // Validate it's actual code
-  if (fixed.length < 20 || !fixed.includes('function')) {
-    console.error('❌ Cleaned code invalid, using fallback');
+  if (hasJSONError) {
+    console.log('🔧 JSON error detected - using template fallback');
     return this.getFallbackTemplate(filepath);
   }
   
-  return fixed;
+  // Only try AI repair for syntax errors
+  const prompt = `Fix ONLY syntax errors in this code. NO explanations.
+
+ERRORS:
+${errors.slice(0, 3).join('\n')}
+
+CODE:
+${brokenCode.substring(0, 2000)}
+
+Return ONLY fixed code, no markdown.`;
+
+  try {
+    const response = await this.client.create({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 3000,
+      temperature: 0.1,
+      timeout: 30000 // 30s timeout
+    });
+
+    let fixed = response.content[0].text.trim();
+    
+    // Nuclear cleaning
+    fixed = fixed
+      .replace(/[｜▁]/g, '')
+      .replace(/<\|.*?\|>/g, '')
+      .replace(/```[\w]*\n?/g, '')
+      .replace(/\|begin_of_sentence\|/gi, '')
+      .replace(/\|end_of_turn\|/gi, '')
+      .trim();
+    
+    // Validate output
+    if (fixed.length < 20 || !fixed.includes('function') && !fixed.includes('const')) {
+      console.error('❌ AI repair produced garbage - using fallback');
+      return this.getFallbackTemplate(filepath);
+    }
+    
+    return fixed;
+    
+  } catch (error) {
+    console.error('❌ AI repair failed:', error.message.substring(0, 100));
+    return this.getFallbackTemplate(filepath);
+  }
+}
+
+// NEW: Get fallback templates
+getFallbackTemplate(filepath) {
+  if (filepath.includes('routes/')) {
+    return `const express = require('express');
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  res.json({ message: 'API endpoint' });
+});
+
+module.exports = router;`;
+  }
+  
+  if (filepath.includes('controller')) {
+    return `exports.handler = async (req, res) => {
+  try {
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};`;
+  }
+  
+  // Generic fallback
+  return `// ${filepath}
+// Fallback template - implement logic here
+module.exports = {};`;
 }
 
   async generateMiddleware(middlewareConfig, projectData) {

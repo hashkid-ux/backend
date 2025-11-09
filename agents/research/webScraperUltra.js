@@ -50,11 +50,12 @@ class WebScraperUltra {
 
   async initBrowser() {
 
-    // Restart browser every 10 uses to prevent memory leaks
-  if (this.browserUseCount > 10) {
+    if (this.browserUseCount > 10) {
+    console.log('🔄 Restarting browser to prevent memory leaks');
     await this.closeBrowser();
     this.browserUseCount = 0;
   }
+
 
     if (this.browserDisabled) {
       return null;
@@ -113,7 +114,6 @@ class WebScraperUltra {
       console.log('✅ Browser ready');
       this.browserUseCount = (this.browserUseCount || 0) + 1;
       return this.browser;
-
       
     } catch (error) {
       console.error('❌ Browser launch failed:', error.message);
@@ -249,34 +249,35 @@ class WebScraperUltra {
   }
 
   async scrapeWithBrowser(url, options) {
-    let context = null;
-    let page = null;
+  let context = null;
+  let page = null;
+  let timeoutId = null;
 
-    try {
-      const browser = await this.initBrowser();
+  try {
+    const browser = await this.initBrowser();
     if (!browser) throw new Error('Browser unavailable');
 
-      context = await browser.newContext({
-        userAgent: this.getRandomUserAgent(),
-        viewport: { width: 1280, height: 720 },
-        ignoreHTTPSErrors: true,
-        javaScriptEnabled: true,
-        // ← ADD THESE:
+    context = await browser.newContext({
+      userAgent: this.getRandomUserAgent(),
+      viewport: { width: 1280, height: 720 },
+      ignoreHTTPSErrors: true,
       bypassCSP: true,
-      timezoneId: 'America/New_York',
-      locale: 'en-US',
-      // Critical: Prevent memory leaks
-      serviceWorkers: 'block',
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9'
-      }
-      });
+      serviceWorkers: 'block', // CRITICAL: Prevent memory leaks
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' }
+    });
 
-      page = await context.newPage();
-      page.setDefaultTimeout(10000);
-      page.setDefaultNavigationTimeout(10000);
+    page = await context.newPage();
+    
+    // CRITICAL: Force-close after 15s
+    timeoutId = setTimeout(async () => {
+      console.warn('⚠️ Force-closing page after timeout');
+      try {
+        if (page) await page.close({ runBeforeUnload: false });
+        if (context) await context.close();
+      } catch (e) {}
+    }, 15000);
 
-      // ← ADD: Block heavy resources
+    // Block heavy resources
     await page.route('**/*', (route) => {
       const type = route.request().resourceType();
       if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
@@ -286,58 +287,64 @@ class WebScraperUltra {
       }
     });
 
-      await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 10000
-      });
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 10000
+    });
 
-      await page.waitForTimeout(1500); // Let JS load
+    await page.waitForTimeout(1500);
+    const html = await page.content();
+    const $ = cheerio.load(html);
 
-      const html = await page.content();
-      const $ = cheerio.load(html);
+    clearTimeout(timeoutId);
 
-      const data = {
-        url,
-        title: this.extractTitle($),
-        metaDescription: this.extractMetaDescription($),
-        headings: this.extractHeadings($),
-        links: this.extractLinks($, url),
-        images: this.extractImages($, url),
-        text: this.extractText($),
-        social: this.extractSocialLinks($),
-        contactInfo: this.extractContactInfo($),
-        pricing: this.extractPricing($),
-        features: this.extractFeatures($),
-        reviews: this.extractReviewsFromPage($),
-        method: 'browser',
-        scrapedAt: new Date().toISOString(),
-        success: true
-      };
+    const data = {
+      url,
+      title: this.extractTitle($),
+      metaDescription: this.extractMetaDescription($),
+      headings: this.extractHeadings($),
+      links: this.extractLinks($, url),
+      text: this.extractText($),
+      method: 'browser',
+      scrapedAt: new Date().toISOString(),
+      success: true
+    };
 
-      return data;
+    return data;
 
-    } catch (error) {
-      // ← ADD: More graceful degradation
+  } catch (error) {
     if (error.message.includes('Target') || error.message.includes('closed')) {
       this.browserDisabled = true;
-      console.log('🚫 Browser permanently disabled after crash');
+      console.log('🚫 Browser crashed - permanently disabled');
     }
     throw error;
     
   } finally {
-      // ← CRITICAL: Aggressive cleanup
+    // CRITICAL: Cleanup in reverse order with error handling
+    clearTimeout(timeoutId);
+    
     if (page) {
-      try { 
-        await page.close({ runBeforeUnload: false }); 
-      } catch (e) {}
+      try {
+        await page.close({ runBeforeUnload: false });
+      } catch (e) {
+        console.warn('Page close failed:', e.message);
+      }
     }
+    
     if (context) {
-      try { 
-        await context.close(); 
-      } catch (e) {}
+      try {
+        await context.close();
+      } catch (e) {
+        console.warn('Context close failed:', e.message);
+      }
+    }
+    
+    // Force garbage collection hint
+    if (global.gc) {
+      global.gc();
     }
   }
-  }
+}
 
   // ==========================================
   // SEARCH ENGINES - MULTI-STRATEGY

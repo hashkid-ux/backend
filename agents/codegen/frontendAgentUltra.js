@@ -288,49 +288,70 @@ CRITICAL: Plan based on ACTUAL features needed, not generic templates. If simple
 // === USAGE: Replace existing generators ===
 
 async generateDynamicFiles(projectData, architecture) {
-  console.log('🔨 Generating files (OPTIMIZED)...');
+  console.log('🔨 Generating files (QUALITY-FIRST)...');
   const files = {};
+  
+  let aiGeneratedCount = 0;
+  let templateUsedCount = 0;
 
-  // CORE FILES (no AI)
-  files['public/index.html'] = this.generateIndexHtml(projectData);
-  files['src/index.js'] = this.generateReactIndex(projectData);
-  files['src/index.css'] = this.generateTailwindCSS();
-  files['package.json'] = this.generatePackageJson(projectData);
-  files['tailwind.config.js'] = this.generateTailwindConfig();
-  files['README.md'] = this.generateREADME(projectData);
-
-  // APP.JS - fallback template
-  files['src/App.js'] = this.getFallbackApp(projectData, architecture);
-
-  // PAGES - Batch or template
+  // PAGES - Try AI first, fallback to template
   const pages = architecture.fileStructure.pages || [];
-  if (pages.length > 2) {
-    console.log(`📦 Batch generating ${pages.length} pages...`);
-    const batchedPages = await this.generatePagesBatch(pages, projectData);
-    Object.assign(files, batchedPages);
-  } else {
-    for (const page of pages) {
+  
+  for (const page of pages) {
+    try {
+      // CRITICAL: Validate before using
+      this.validateBeforeGeneration(page, 'page');
+      
+      const code = await this.generatePage(page, projectData);
+      const validation = this.validateGeneratedCode(code, page.path);
+      
+      if (validation.valid) {
+        files[page.path] = code;
+        aiGeneratedCount++;
+        console.log(`✅ AI-generated: ${page.name}`);
+      } else {
+        throw new Error(validation.reason);
+      }
+      
+    } catch (error) {
+      console.error(`⚠️ AI failed for ${page.name}: ${error.message}`);
       files[page.path] = this.getFallbackPage(page, projectData);
+      templateUsedCount++;
     }
   }
-
-  // COMPONENTS - template only
+  
+  // COMPONENTS - Always use templates (faster, reliable)
   for (const component of architecture.fileStructure.components || []) {
     files[component.path] = this.getFallbackComponent(component);
   }
-
-  // SERVICES - template
-  for (const service of architecture.fileStructure.services || []) {
-    files[service.path] = this.getTemplateService(service);
+  
+  // Log quality metrics
+  console.log(`📊 Quality: ${aiGeneratedCount} AI-generated, ${templateUsedCount} templates`);
+  
+  if (templateUsedCount > pages.length * 0.5) {
+    console.warn('⚠️ WARNING: >50% templates used - quality degraded');
   }
-
-  // UTILS - template
-  for (const util of architecture.fileStructure.utils || []) {
-    files[util.path] = await this.generateUtil(util, projectData);
-  }
-
+  
   return files;
 }
+
+// NEW: Pre-generation validation
+validateBeforeGeneration(config, type) {
+  const { name, path } = config;
+  
+  // Validate naming
+  if (type === 'page' && !/^[A-Z][a-zA-Z0-9]*Page$/.test(name)) {
+    throw new Error(`Invalid page name: ${name} (must end with 'Page')`);
+  }
+  
+  // Validate path
+  if (path.includes('..') || path.startsWith('/')) {
+    throw new Error(`Invalid path: ${path}`);
+  }
+  
+  return true;
+}
+
 
 // NEW METHOD: Add this after generateDynamicFiles
 async generatePagesBatch(pages, projectData) {
@@ -756,28 +777,22 @@ aggressiveClean(code) {
 
 // === NEW: Post-generation validation ===
 validateGeneratedCode(code, filepath) {
-  // Check minimum length
-  if (code.length < 50) {
-    return { valid: false, reason: 'Code too short' };
+  // Minimum length
+  if (code.length < 100) {
+    return { valid: false, reason: 'Code too short (<100 chars)' };
   }
   
-  // Check for required elements
-  const isJS = filepath.endsWith('.js') || filepath.endsWith('.jsx');
-  const isComponent = filepath.includes('components/') || filepath.includes('pages/');
-  
-  if (isJS) {
-    // Must have imports or exports
-    if (!code.includes('import') && !code.includes('export') && !code.includes('module.exports')) {
-      return { valid: false, reason: 'No imports/exports' };
-    }
-    
-    // Components must export default
-    if (isComponent && !code.includes('export default')) {
-      return { valid: false, reason: 'Component missing default export' };
-    }
+  // Must have imports
+  if (!code.includes('import') && !code.includes('require')) {
+    return { valid: false, reason: 'No imports found' };
   }
   
-  // Check for contamination markers
+  // Must have export
+  if (!code.includes('export default') && !code.includes('module.exports')) {
+    return { valid: false, reason: 'No export found' };
+  }
+  
+  // Check for contamination
   const contamination = ['│', '▁', '<|', '|>', '|begin', '|end'];
   for (const marker of contamination) {
     if (code.includes(marker)) {
@@ -788,7 +803,7 @@ validateGeneratedCode(code, filepath) {
   // Check balanced brackets
   const opens = (code.match(/[{[(]/g) || []).length;
   const closes = (code.match(/[}\])]/g) || []).length;
-  if (Math.abs(opens - closes) > 2) { // Allow small imbalance for templates
+  if (Math.abs(opens - closes) > 2) {
     return { valid: false, reason: 'Unbalanced brackets' };
   }
   

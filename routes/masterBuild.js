@@ -11,6 +11,30 @@ const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 
+// Batch DB updates to avoid N+1
+const dbUpdateQueue = new Map();
+const DB_BATCH_INTERVAL = 5000; // Update DB every 5s instead of every call
+
+function queueDBUpdate(projectId, updates) {
+  const existing = dbUpdateQueue.get(projectId) || {};
+  dbUpdateQueue.set(projectId, { ...existing, ...updates });
+}
+
+// Flush queue every 5 seconds
+setInterval(async () => {
+  if (dbUpdateQueue.size === 0) return;
+  
+  const updates = Array.from(dbUpdateQueue.entries());
+  dbUpdateQueue.clear();
+  
+  await Promise.allSettled(
+    updates.map(([projectId, data]) => 
+      ProjectService.update(projectId, data)
+        .catch(err => console.error(`DB update failed for ${projectId}:`, err))
+    )
+  );
+}, DB_BATCH_INTERVAL);
+
 
 // ==========================================
 // HELPER FUNCTIONS
@@ -147,7 +171,7 @@ function updateBuildProgress(buildId, updates) {
     progress: updates.progress !== undefined ? updates.progress : current.progress,
     message: updates.message || current.message,
     current_task: updates.message || current.message,
-    logs: logs.slice(-50), // Keep last 50 logs
+    logs: logs.slice(-50),
     stats: updatedStats,
     files: updatedFiles,
     lastUpdated: new Date().toISOString()
@@ -155,7 +179,7 @@ function updateBuildProgress(buildId, updates) {
 
   activeBuilds.set(buildId, updated);
 
-  // Cache files for live preview
+  // Cache files
   if (Object.keys(updatedFiles).length > 0) {
     buildFilesCache.set(buildId, {
       files: updatedFiles,
@@ -164,15 +188,15 @@ function updateBuildProgress(buildId, updates) {
     });
   }
 
-  // Store detailed logs
+  // Store logs
   if (!buildLogs.has(buildId)) {
     buildLogs.set(buildId, []);
   }
   buildLogs.get(buildId).push(log);
 
-  // Database update (async, non-blocking)
+  // CRITICAL FIX: Queue DB update instead of immediate write
   if (current.project_id) {
-    ProjectService.update(current.project_id, {
+    queueDBUpdate(current.project_id, {
       buildProgress: updated.progress,
       filesGenerated: updatedStats.filesGenerated || 0,
       linesOfCode: updatedStats.linesOfCode || 0,
@@ -184,7 +208,7 @@ function updateBuildProgress(buildId, updates) {
         stats: updatedStats,
         filesAvailable: Object.keys(updatedFiles).length
       }
-    }).catch(err => console.error('⚠️ DB update failed:', err));
+    });
   }
 
   console.log(`[${buildId}] ${updated.progress}% - ${updated.phase} - ${updated.message}`);
