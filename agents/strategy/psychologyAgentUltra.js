@@ -1,7 +1,8 @@
 // backend/agents/strategy/psychologyAgentUltra.js
 // ULTRA Psychology Agent - Advanced Persuasion & Behavioral Science
 
-import aiClient from '../../services/aiClient';
+// FIXED: Changed from ESM to CommonJS
+const aiClient = require('../../services/aiClient');
 
 class PsychologyAgentUltra {
   constructor(tier = 'free') {
@@ -152,19 +153,19 @@ class PsychologyAgentUltra {
     ];
   }
 
-async createPersuasionArchitecture(triggers, competitors) {
-  console.log('   🏗️ Creating persuasion architecture...');
+  async createPersuasionArchitecture(triggers, competitors) {
+    console.log('   🏗️ Creating persuasion architecture...');
 
-  // FIX: Simplify triggers to avoid escaping issues
-  const simplifiedTriggers = triggers.map(t => ({
-    trigger: t.trigger,
-    principle: t.principle,
-    priority: t.priority || 'medium'
-  }));
+    // FIX: Simplify triggers to avoid escaping issues
+    const simplifiedTriggers = triggers.map(t => ({
+      trigger: t.trigger,
+      principle: t.principle,
+      priority: t.priority || 'medium'
+    }));
 
-  const jsonInstructions = `Return ONLY valid JSON. No markdown, no explanations.`;
+    const jsonInstructions = `Return ONLY valid JSON. No markdown, no explanations.`;
 
-  const prompt = `${jsonInstructions}
+    const prompt = `${jsonInstructions}
 
 Design a persuasion map for an e-commerce marketplace.
 
@@ -207,65 +208,63 @@ Return this JSON structure:
   }
 }`;
 
-  try {
-    const response = await this.client.create({
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 2000, // Reduced from 4000
-      temperature: 0.1
-    });
+    try {
+      const response = await this.client.create({
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2000,
+        temperature: 0.1
+      });
 
-    const content = response.content[0].text;
-    const cleaned = this.extractCleanJSON(content);
-    
-    if (!cleaned) {
-      console.warn('⚠️ Using fallback persuasion map');
+      const content = response.content[0].text;
+      const cleaned = this.extractCleanJSON(content);
+      
+      if (!cleaned) {
+        console.warn('⚠️ Using fallback persuasion map');
+        return this.getDefaultPersuasionMap();
+      }
+      
+      return JSON.parse(cleaned);
+
+    } catch (error) {
+      console.error('   ❌ Persuasion architecture error:', error.message);
       return this.getDefaultPersuasionMap();
     }
+  }
+
+  extractCleanJSON(text) {
+    // Remove markdown
+    text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
     
-    return JSON.parse(cleaned);
-
-  } catch (error) {
-    console.error('   ❌ Persuasion architecture error:', error.message);
-    return this.getDefaultPersuasionMap();
-  }
-}
-
-  // ← ADD NEW METHOD:
-extractCleanJSON(text) {
-  // Remove markdown
-  text = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
-  
-  // Find boundaries
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  
-  if (start === -1 || end === -1) return null;
-  
-  let json = text.substring(start, end + 1);
-  
-  // Fix common issues
-  json = json.replace(/,(\s*[}\]])/g, '$1');  // trailing commas
-  json = json.replace(/\\/g, '\\\\');         // escape backslashes
-  json = json.replace(/\n/g, ' ');            // newlines
-  
-  // Test parse
-  try {
-    JSON.parse(json);
-    return json;
-  } catch (e) {
-    // Truncate at error position
-    const match = e.message.match(/position (\d+)/);
-    if (match) {
-      const pos = parseInt(match[1]);
-      const truncated = json.substring(0, pos);
-      const lastComplete = truncated.lastIndexOf('}');
-      if (lastComplete > 0) {
-        return json.substring(0, lastComplete + 1);
+    // Find boundaries
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start === -1 || end === -1) return null;
+    
+    let json = text.substring(start, end + 1);
+    
+    // Fix common issues
+    json = json.replace(/,(\s*[}\]])/g, '$1');
+    json = json.replace(/\\/g, '\\\\');
+    json = json.replace(/\n/g, ' ');
+    
+    // Test parse
+    try {
+      JSON.parse(json);
+      return json;
+    } catch (e) {
+      const match = e.message.match(/position (\d+)/);
+      if (match) {
+        const pos = parseInt(match[1]);
+        const truncated = json.substring(0, pos);
+        const lastComplete = truncated.lastIndexOf('}');
+        if (lastComplete > 0) {
+          return json.substring(0, lastComplete + 1);
+        }
       }
+      return null;
     }
-    return null;
   }
-}
 
   async designEmotionalJourney(market, trends, dateContext) {
     console.log('   💭 Designing emotional journey...');
@@ -276,91 +275,43 @@ extractCleanJSON(text) {
           stage: 'Discovery',
           emotion: 'Curiosity',
           goal: 'Capture attention',
-          tactics: [
-            'Provocative headline',
-            'Intriguing visual',
-            'Problem statement'
-          ],
-          copy: [
-            '"What if you could..."',
-            '"Imagine a world where..."',
-            '"You\'re not alone in feeling..."'
-          ]
+          tactics: ['Provocative headline', 'Intriguing visual', 'Problem statement'],
+          copy: ['"What if you could..."', '"Imagine a world where..."', '"You\'re not alone in feeling..."']
         },
         {
           stage: 'Interest',
           emotion: 'Hope',
           goal: 'Build desire',
-          tactics: [
-            'Show benefits',
-            'Social proof',
-            'Before/after comparison'
-          ],
-          copy: [
-            '"Finally, a solution that..."',
-            '"Join thousands who..."',
-            '"See results in days, not months"'
-          ]
+          tactics: ['Show benefits', 'Social proof', 'Before/after comparison'],
+          copy: ['"Finally, a solution that..."', '"Join thousands who..."', '"See results in days, not months"']
         },
         {
           stage: 'Evaluation',
           emotion: 'Trust',
           goal: 'Remove doubt',
-          tactics: [
-            'Testimonials',
-            'Guarantees',
-            'Risk reversal'
-          ],
-          copy: [
-            '"100% money-back guarantee"',
-            '"No credit card required"',
-            '"Cancel anytime, no questions asked"'
-          ]
+          tactics: ['Testimonials', 'Guarantees', 'Risk reversal'],
+          copy: ['"100% money-back guarantee"', '"No credit card required"', '"Cancel anytime, no questions asked"']
         },
         {
           stage: 'Purchase',
           emotion: 'Excitement',
           goal: 'Close the deal',
-          tactics: [
-            'Urgency',
-            'Scarcity',
-            'Bonus offers'
-          ],
-          copy: [
-            '"Start free today"',
-            '"Limited time: Get X free"',
-            '"Your success starts now"'
-          ]
+          tactics: ['Urgency', 'Scarcity', 'Bonus offers'],
+          copy: ['"Start free today"', '"Limited time: Get X free"', '"Your success starts now"']
         },
         {
           stage: 'Experience',
           emotion: 'Satisfaction',
           goal: 'Deliver value',
-          tactics: [
-            'Onboarding',
-            'Quick wins',
-            'Success tracking'
-          ],
-          copy: [
-            '"Welcome! Let\'s get you started"',
-            '"You\'re already X% there"',
-            '"Look what you\'ve achieved!"'
-          ]
+          tactics: ['Onboarding', 'Quick wins', 'Success tracking'],
+          copy: ['"Welcome! Let\'s get you started"', '"You\'re already X% there"', '"Look what you\'ve achieved!"']
         },
         {
           stage: 'Loyalty',
           emotion: 'Belonging',
           goal: 'Build community',
-          tactics: [
-            'Exclusive access',
-            'Recognition',
-            'Community features'
-          ],
-          copy: [
-            '"You\'re part of our family"',
-            '"Early access for you"',
-            '"Your opinion matters"'
-          ]
+          tactics: ['Exclusive access', 'Recognition', 'Community features'],
+          copy: ['"You\'re part of our family"', '"Early access for you"', '"Your opinion matters"']
         }
       ],
       seasonal_adaptations: this.getSeasonalEmotions(dateContext)
@@ -687,4 +638,5 @@ Start building free today. (CTA)"`
   }
 }
 
-export default PsychologyAgentUltra;
+// FIXED: Changed from ESM to CommonJS
+module.exports = PsychologyAgentUltra;
