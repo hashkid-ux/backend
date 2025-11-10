@@ -2,6 +2,7 @@
 // ULTRA Frontend Agent - Self-Debugging, Context-Aware, Dynamic
 
 const aiClient = require('../../services/aiClient');
+const ImportFixer = require('./utils/importFixer');
 
 class FrontendAgentUltra {
   constructor(tier = 'free') {
@@ -340,6 +341,18 @@ async generateDynamicFiles(projectData, architecture) {
   if (templateUsedCount > pages.length * 0.5) {
     console.warn('⚠️ WARNING: >50% templates used - quality degraded');
   }
+
+  // After all files generated, validate imports
+  Object.entries(files).forEach(([path, code]) => {
+    if (path.endsWith('.js') || path.endsWith('.jsx')) {
+      const validation = ImportFixer.validateImports(code);
+      if (!validation.valid) {
+        console.warn(`⚠️ ${path}: ${validation.errors.join(', ')}`);
+        // Auto-fix
+        files[path] = ImportFixer.fix(code, path);
+      }
+    }
+  });
   
   return files;
 }
@@ -611,7 +624,10 @@ Generate the complete component now.`;
     // NEW: Check if we have directive-based config
     const hasDirective = pageConfig.design && pageConfig.content;
     
+    
     let prompt;
+
+    
     
     if (hasDirective) {
       // Use clean directive-based prompt
@@ -673,6 +689,9 @@ Generate COMPLETE working page.`;
     });
 
     let code = this.aggressiveClean(response.content[0].text);
+
+    // NEW: Auto-fix imports
+    code = ImportFixer.fix(code, pageConfig.path);
     
     // Force-inject imports if missing
     if (!code.includes('import React')) {
@@ -907,6 +926,8 @@ Return ONLY the complete JavaScript code, no markdown.`;
     let code = response.content[0].text;
     code = code.replace(/```(?:javascript|jsx|js)?\n?/g, '').replace(/```\n?$/g, '');
     
+    code = ImportFixer.fix(code, contextConfig.path);
+
     return code.trim();
   }
 
